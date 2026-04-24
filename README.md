@@ -66,11 +66,6 @@ Runtime requirements:
 - Node.js `>= 22`
 - a separately installed `libravdbd` daemon
 
-Compatibility note:
-
-- this plugin is currently only verified against OpenClaw `2026.4.23`
-- newer or older OpenClaw builds may work, but they are not covered by the current test matrix
-
 Default endpoints:
 
 - macOS/Linux user-local daemon: `unix:$HOME/.clawdb/run/libravdb.sock`
