@@ -1,63 +1,54 @@
 # Model Strategy
 
-## Why ONNX Over Ollama
+The plugin uses local ONNX-first inference for embeddings and optional
+abstractive summarization. That keeps prompt assembly local, predictable, and
+available offline after assets are installed.
 
-The plugin uses ONNX-first local inference for embedding and optional abstractive summarization.
+## Why ONNX Over Ollama For The Critical Path
 
-### Latency
+`assemble` runs before each response build. An embedding request that crosses a
+process and HTTP server boundary adds avoidable tail latency. Local ONNX
+inference inside the sidecar keeps retrieval close to the database and avoids a
+runtime dependency on a separate model server.
 
-`assemble` is on the critical path before every response build. An embedding request that crosses process and HTTP boundaries adds avoidable tail latency. Local ONNX inference inside the sidecar keeps the retrieval path in the low-millisecond range on the target hardware profile.
-`assemble` is on the critical path before every response build. An embedding
-request that crosses process and HTTP boundaries adds avoidable tail latency.
-Local ONNX inference inside the sidecar keeps the retrieval path local and
-predictable. On the current Apple M2 development machine, the repository's own
-benchmark harness measures roughly `16-23 ms/op` for MiniLM query embeddings and
-about `44 ms/op` for Nomic in the steady-state Go benchmark path.
+ONNX assets can be provisioned once and reused without network access. Given
+fixed weights and input, embeddings are deterministic enough for stable
+similarity ordering and reproducible retrieval behavior.
 
-### Offline Operation
+The trade-off is artifact size. This project accepts that cost because local
+latency and offline operation are part of the product contract.
 
-The plugin is designed to be local-first. Requiring a running Ollama server would break that guarantee. ONNX assets can be provisioned once and reused without network or daemon availability.
+## Default And Optional Embedding Profiles
 
-### Determinism
+The current safe default profile is `all-minilm-l6-v2`.
 
-ONNX inference is deterministic given fixed weights and input. Deterministic embeddings give stable similarity ordering and reproducible retrieval behavior.
+MiniLM is the default because it keeps local retrieval within the target memory
+envelope on macOS and is less fragile with ONNX Runtime execution than larger
+profiles.
 
-### Binary Size Trade-Off
+`nomic-embed-text-v1.5` remains available as an explicit opt-in profile for
+long-context retrieval experiments. Nomic's Matryoshka training makes
+`64d -> 256d -> 768d` tiering principled rather than arbitrary truncation, but
+its larger footprint makes it a less conservative default.
 
-Local models increase the artifact footprint. That is an explicit trade-off accepted by the architecture because predictable latency and offline operation are more important for this plugin than minimal package size.
+For exact profile metadata, read [Embedding profiles](./embedding-profiles.md).
 
-## Why `nomic-embed-text-v1.5`
+## Summarization
 
-This is the default embedding profile because it earned the role on two axes:
+Compaction can run without an abstractive summarizer. When the optional T5-small
+assets are not provisioned, the daemon degrades to the extractive path.
 
-- long-context document support
-- Matryoshka structure for tiered retrieval
+T5-small is the optional local abstractive summarizer because it is small enough
+for CPU-local operation while still useful for session-cluster summaries. Larger
+generative models would increase latency and operational complexity.
 
-The model’s Matryoshka training is what makes the `64d -> 256d -> 768d` cascade principled rather than arbitrary truncation.
+## Model Roles
 
-## Why `all-minilm-l6-v2` Still Exists
+| Model/profile | Role |
+|---|---|
+| `all-minilm-l6-v2` | Default lightweight embedding profile. |
+| `nomic-embed-text-v1.5` | Opt-in long-context embedding profile. |
+| T5-small | Optional local abstractive compaction summarizer. |
 
-MiniLM remains the lightweight fallback profile. It is useful when:
-
-- the full Nomic profile is unavailable
-- a smaller bundled footprint matters more than long-context or Matryoshka behavior
-
-It is no longer the quality-first default.
-
-## Why T5-small for Summarization
-
-The abstractive summarization path is optional and must remain CPU-feasible on local machines. T5-small fits that constraint better than larger generative models:
-
-- small enough to run locally
-- expressive enough for session-cluster summarization
-- does not require a remote server
-
-The plugin still degrades gracefully to extractive compaction when the T5 assets are not provisioned.
-
-## Model Roles in the System
-
-- Nomic embedder: quality-first retrieval path, Matryoshka tiers
-- MiniLM: fallback embedder
-- T5-small: optional higher-quality compaction summarizer
-
-The model strategy is therefore not “use ONNX everywhere because ONNX is fashionable.” It is “use ONNX where local deterministic inference is part of the product contract.”
+External summarizer endpoints, such as Ollama, are optional. They are not part
+of the required retrieval path.

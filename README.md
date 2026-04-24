@@ -1,71 +1,28 @@
-# LibraVDB Memory for OpenClaw
+# ♎ LibraVDB - Memory and Context Management
 
-[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://github.com/xDarkicex/libravdbd)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](./package.json)
-[![OpenClaw](https://img.shields.io/badge/OpenClaw-memory%20plugin-111827)](./openclaw.plugin.json)
+<div align="center">
+  <img src="./docs/assets/libravdb-logo.svg" alt="LibraVDB" width="640">
+</div>
 
-`@xdarkicex/openclaw-memory-libravdb` is a local-first OpenClaw memory system
-for people who want more than "top-k vectors plus a prompt footer."
+<div align="center">
+  <a href="https://github.com/xDarkicex/libravdbd"><img src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.25+"></a>
+  <a href="./package.json"><img src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5.x"></a>
+  <a href="./openclaw.plugin.json"><img src="https://img.shields.io/badge/OpenClaw-memory%20plugin-111827" alt="OpenClaw memory plugin"></a>
+  <a href="https://www.npmjs.com/package/@xdarkicex/openclaw-memory-libravdb"><img src="https://img.shields.io/npm/v/%40xdarkicex%2Fopenclaw-memory-libravdb?label=release&color=5B21B6" alt="Release"></a>
+</div>
 
-It replaces the default lightweight memory path with a full context lifecycle:
+`@xdarkicex/openclaw-memory-libravdb` is a local-first OpenClaw memory plugin
+backed by the `libravdbd` daemon. It replaces the lightweight default memory
+path with scoped session, user, and global memory; continuity-aware prompt
+assembly; durable recall; and sidecar-owned compaction.
 
-- active session memory
-- durable per-user memory
-- shared global memory
-- continuity-aware compaction
-- authored context partitioning
-- hybrid scoring across scope, recency, and similarity
+[Install](./docs/install.md) · [Full installation reference](./docs/installation.md) · [Architecture](./docs/architecture.md) · [Security](./docs/security.md) · [Performance and tuning](./docs/performance-and-tuning.md) · [Contributing](./docs/contributing.md)
 
-This repository pairs a TypeScript OpenClaw plugin with a Go daemon backed by
-`libraVDB`. The plugin owns both the `memory` and `contextEngine` slots, while
-the daemon handles embeddings, retrieval, storage, and compaction.
-On newer OpenClaw builds, it also bridges the built-in `memory_search` runtime
-to the same libraVDB sidecar instead of leaving that tool inert.
+New install? Start here: [Install guide](./docs/install.md). Preferred setup on
+macOS: install `libravdbd` with Homebrew, install the OpenClaw plugin, then
+assign the plugin to both required slots.
 
-For local development, this repo can target a running daemon or a manual local
-daemon binary.
-
-## Why This Exists
-
-The stock "single memory bucket" pattern is good for simple persistence, but it
-starts to break down when you care about:
-
-- keeping the newest working context raw and intact
-- separating ephemeral session state from durable memory
-- avoiding long-session prompt collapse
-- preserving authored instructions differently from recalled user content
-- treating memory retrieval as a ranked assembly problem instead of plain
-  nearest-neighbor lookup
-
-LibraVDB Memory exists for that harder class of memory problem.
-
-## What Makes It Different
-
-These are the core differentiators the project is built around:
-
-- Dual slot ownership: the plugin owns both memory prompt injection and the
-  full context lifecycle.
-- Built-in `memory_search` bridge: newer OpenClaw memory runtime calls are
-  routed into the same sidecar-backed retrieval path.
-- Lifecycle hint adoption: `before_reset` and `session_end` are used as
-  advisory signals into the sidecar without giving OpenClaw control of ingest
-  or compaction.
-- Sidecar-owned lifecycle journal: reset/end hints are recorded internally for
-  debugging and auditing without entering normal memory retrieval.
-  The journal is bounded by a sidecar retention cap so it does not grow
-  forever.
-- Local-first runtime: the core path does not depend on external embedding
-  services.
-- Three-tier memory: session, durable user, and global memory stay distinct.
-- Hybrid scoring: retrieval is ranked by semantic similarity, recency, scope,
-  and summary quality instead of cosine alone.
-- Automatic compaction: long sessions compact behind a protected recent tail.
-- Crash-resilient IPC: the host talks to a sidecar over a stable local socket
-  or loopback TCP endpoint with degraded-mode fallback.
-
-## Quick Start
-
-The supported install flow is:
+## Install
 
 ```bash
 brew tap xDarkicex/homebrew-openclaw-libravdb-memory
@@ -74,10 +31,7 @@ brew services start libravdbd
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 ```
 
-The Homebrew formula installs the daemon plus the bundled ONNX Runtime, embedding assets, and T5 summarizer assets it needs to boot cleanly on supported platforms.
-
-Then assign the plugin to both required OpenClaw slots in
-`~/.openclaw/openclaw.json`:
+Then activate both plugin slots in `~/.openclaw/openclaw.json`:
 
 ```json
 {
@@ -95,332 +49,119 @@ Then assign the plugin to both required OpenClaw slots in
 }
 ```
 
-Verify the setup:
+Verify the daemon and plugin:
 
 ```bash
 openclaw memory status
 ```
 
-Expected healthy state:
+Healthy output should show `Sidecar=running`, stored memory counts, the active
+gate threshold, and the loaded embedding profile.
 
-- the daemon is reachable
-- the plugin is active as the memory provider
-- the runtime can report stored counts and model readiness
+## Quick Start
 
-## Markdown Ingestion
+Runtime requirements:
 
-LibraVDB Memory can watch markdown roots and sync changed notes into vector
-memory without changing the Go sidecar RPC contract.
+- OpenClaw `>= 2026.3.22`
+- Node.js `>= 22`
+- a separately installed `libravdbd` daemon
 
-The two built-in source adapters are:
+Default endpoints:
 
-- `generic`: for OpenClaw-owned markdown, including stock files like
-  `MEMORY.md`
-- `obsidian`: for Obsidian vault roots, with tag-aware defaults
+- macOS/Linux user-local daemon: `unix:$HOME/.clawdb/run/libravdb.sock`
+- Homebrew daemon on Apple Silicon: `unix:/opt/homebrew/var/clawdb/run/libravdb.sock`
+- Windows daemon: `tcp:127.0.0.1:37421`
 
-Configuration is driven through the plugin config fields in
-`openclaw.plugin.json`:
+If your daemon runs elsewhere, set `sidecarPath`:
 
-- `markdownIngestionEnabled`
-- `markdownIngestionRoots`
-- `markdownIngestionInclude`
-- `markdownIngestionExclude`
-- `markdownIngestionDebounceMs`
-- `markdownIngestionObsidianEnabled`
-- `markdownIngestionObsidianRoots`
-- `markdownIngestionObsidianInclude`
-- `markdownIngestionObsidianExclude`
-- `markdownIngestionObsidianDebounceMs`
-
-Typical usage:
-
-- point `markdownIngestionRoots` at OpenClaw-owned markdown roots, such as
-  `.openclaw/skills/*/*.md` or a stock memory directory that contains
-  `MEMORY.md`
-- enable the Obsidian adapter separately with
-  `markdownIngestionObsidianEnabled: true` and one or more vault roots
-- use include/exclude globs to narrow what gets watched when needed
-
-By default, the Obsidian adapter only auto-ingests notes that look like memory
-notes, using frontmatter tags or inline tags like `#project`. The OpenClaw
-stock `MEMORY.md` file is always eligible through the generic adapter path.
-
-## Dream Promotion
-
-Dream promotion is a separate, opt-in path for promoting vetted dream diary
-entries directly into a dedicated `dream:{userId}` collection.
-
-It does not use `MEMORY.md`. Instead, it expects a dream diary markdown file
-that contains explicit candidate bullets under promotion-oriented headings such
-as `## Deep Sleep`. Each promoted bullet should include a trailing metadata
-block with the gating fields:
-
-```md
-- Preserve the recent tail buffer {score=0.82 recall=3 unique=2}
+```json
+{
+  "plugins": {
+    "configs": {
+      "libravdb-memory": {
+        "sidecarPath": "tcp:127.0.0.1:37421"
+      }
+    }
+  }
+}
 ```
 
-Only bullets that satisfy the sidecar gates are inserted. The dream collection
-is isolated from normal `user:` and `global` retrieval by default, and dream
-phrasing in chat or search queries routes there automatically.
+## Highlights
 
-Configure automatic diary watching with:
+- **Dual slot ownership** - owns both OpenClaw `memory` and `contextEngine`.
+- **Memory runtime bridge** - routes built-in `memory_search` calls to the same
+  libraVDB-backed sidecar on hosts that expose the runtime API.
+- **Three memory scopes** - keeps active session, durable user, and global memory
+  separate.
+- **Hybrid retrieval** - blends semantic similarity, scope, recency, and summary
+  quality instead of relying on cosine similarity alone.
+- **Continuity-aware assembly** - preserves the recent working tail while fitting
+  recalled memory into a bounded prompt budget.
+- **Sidecar compaction** - summarizes older session turns without flattening the
+  newest working context.
+- **Local-first inference** - uses local embedding and compaction paths by
+  default, with optional external summarizer configuration.
+- **Explicit daemon lifecycle** - the npm/OpenClaw package stays connect-only;
+  `libravdbd` is installed and supervised separately.
 
-- `dreamPromotionEnabled`
-- `dreamPromotionDiaryPath`
-- `dreamPromotionUserId`
-- `dreamPromotionDebounceMs`
+## Security Defaults
 
-For a manual run, use:
+Stored memory is treated as untrusted historical context. Retrieved memory is
+framed before it reaches the downstream model, memory collections are scoped by
+session/user/global namespace, and daemon installation is outside the npm plugin
+package.
+
+Before exposing OpenClaw over remote channels, read [Security](./docs/security.md).
+
+## Operator Quick Refs
 
 ```bash
+openclaw memory status
+openclaw memory export --user-id <userId>
+openclaw memory flush --user-id <userId>
+openclaw memory journal --limit 50
 openclaw memory dream-promote --user-id <userId> --dream-file /path/to/DREAMS.md
 ```
 
-The manual command and the automatic watcher both go through the same sidecar
-promotion RPC, so the admission gates and provenance metadata are identical.
+Use [Install](./docs/install.md) for daemon lifecycle commands and
+[Uninstall](./docs/uninstall.md) for safe shutdown and removal.
 
-## Install Model
+## Optional Features
 
-This plugin is intentionally **connect-only** at install time.
+- **Markdown ingestion** watches OpenClaw-owned markdown roots or Obsidian vaults
+  and syncs eligible notes into memory. See [Features](./docs/features.md).
+- **Dream promotion** promotes vetted dream diary bullets into an isolated
+  `dream:{userId}` collection. See [Features](./docs/features.md).
+- **Embedding profiles** expose local model metadata defaults for MiniLM and
+  Nomic. See [Embedding profiles](./docs/embedding-profiles.md).
 
-It does not compile Go code during plugin installation, and it does not manage
-daemon lifecycle automatically from the npm package. That is deliberate: some
-OpenClaw environments are strict about postinstall behavior, daemon spawning,
-and anything that looks like binary bootstrap or process management.
+## Docs By Goal
 
-Current model:
+- New install: [Install](./docs/install.md), [Installation reference](./docs/installation.md)
+- Understand the design: [Problem](./docs/problem.md), [Architecture](./docs/architecture.md), [ADRs](./docs/architecture-decisions/README.md)
+- Operate safely: [Security](./docs/security.md), [Uninstall](./docs/uninstall.md)
+- Configure optional inputs: [Features](./docs/features.md), [Embedding profiles](./docs/embedding-profiles.md), [Models](./docs/models.md)
+- Tune or benchmark: [Performance and tuning](./docs/performance-and-tuning.md)
+- Work from source: [Development](./docs/development.md), [Contributing](./docs/contributing.md)
 
-- npm/OpenClaw package: plugin code and docs
-- `libravdbd`: installed and managed separately
-- default daemon endpoint on macOS/Linux:
-  `unix:$HOME/.clawdb/run/libravdb.sock`
-- default daemon endpoint on Windows:
-  `tcp:127.0.0.1:37421`
-
-If your daemon runs elsewhere, set an explicit `sidecarPath`, for example:
-
-- `unix:/custom/path/libravdb.sock`
-- `tcp:127.0.0.1:9999`
-
-## Architecture At A Glance
-
-```text
-OpenClaw host
-  -> memoryPromptSection (static capability header)
-  -> memory runtime bridge (built-in memory_search)
-  -> context engine (bootstrap / ingest / assemble / compact)
-  -> plugin runtime
-  -> JSON-RPC
-  -> libravdbd
-  -> libraVDB + local embedding/summarization stack
-```
-
-The main runtime split is:
-
-- TypeScript host layer:
-  - OpenClaw plugin registration
-  - prompt assembly
-  - hybrid ranking
-  - continuity-aware token budgeting
-  - degraded-mode behavior
-- Go daemon layer:
-  - vector storage
-  - embeddings
-  - search RPCs
-  - compaction and summarization
-  - stable local IPC endpoint
-
-For the implemented architecture map, read [docs/architecture.md](./docs/architecture.md).
-
-## Retrieval Model
-
-The assembly path is not "just search some vectors and paste the top hits."
-
-It combines:
-
-- session search for current-work relevance
-- durable user recall for long-lived personal context
-- global recall for shared facts
-- authored invariant and variant context
-- continuity-preserving recent-tail injection
-- token-budgeted fitting
-
-The ranking model currently blends:
-
-- semantic similarity
-- scope weighting
-- recency decay
-- summary quality attenuation
-
-The formal math and deeper design notes are kept out of the public index on
-purpose.
-
-## LongMemEval Harness
-
-For internal tuning, the repo includes a local LongMemEval harness that runs the
-dataset through the plugin layer and measures whether the assembled prompt still
-contains the evidence turns.
-
-The benchmark runner is committed, but the dataset and generated reports are not.
-Keep downloaded data and local outputs under `benchmarks/longmemeval/`, which is
-ignored by default.
-
-The harness writes JSONL incrementally, so partial results survive if a transient
-daemon failure interrupts a long run.
-
-The run summary now prints a compact table with total questions, processed rows,
-skipped abstentions, errors, session hit rate, turn hit rate, and average prompt
-size.
-
-Run it with:
+## From Source
 
 ```bash
-LONGMEMEVAL_DATA_FILE=/path/to/longmemeval_oracle.json pnpm run benchmark:longmemeval
+pnpm install
+pnpm check
+bash scripts/build-daemon.sh
 ```
 
-If you already have a daemon running and do not want the benchmark to spawn
-another one, set:
-
-```bash
-LONGMEMEVAL_USE_EXISTING_DAEMON=1 LONGMEMEVAL_SIDECAR_PATH=unix:/path/to/libravdb.sock
-```
-
-If the local test daemon drops mid-run, the benchmark will restart it and retry
-the current instance once before recording an error result.
-
-Optional outputs:
-
-- `LONGMEMEVAL_LIMIT` to cap the number of questions
-- `LONGMEMEVAL_TOPK` to change the search budget
-- `LONGMEMEVAL_OUT_FILE` to write JSONL records for analysis
-
-To score a hypothesis JSONL file with the official LongMemEval evaluator, point
-the repo at a local checkout of the benchmark and run:
-
-```bash
-LONGMEMEVAL_EVAL_REPO=/path/to/LongMemEval \
-LONGMEMEVAL_HYPOTHESIS_FILE=/path/to/hypotheses.jsonl \
-LONGMEMEVAL_DATA_FILE=/path/to/longmemeval_oracle.json \
-OPENAI_API_KEY=... \
-pnpm run benchmark:longmemeval:score
-```
-
-That scorer wrapper shells out to the official Python evaluation script and then
-prints the aggregate metrics from the generated log when available.
-
-## Compaction Model
-
-This system does not treat long chats as append-only forever.
-
-Older session turns compact behind a protected recent tail, so the plugin can:
-
-- keep the newest working context raw
-- preserve adjacency-sensitive continuity near the boundary
-- promote older material into summaries
-- avoid letting long sessions drown their own prompt budget
-
-Compaction is designed as part of the memory system itself, not as a separate
-maintenance convenience.
-
-## For Power Users
-
-If you are evaluating this as an operator or advanced OpenClaw user, the key
-practical points are:
-
-- This plugin should own both `memory` and `contextEngine`. Partial slot
-  assignment is a misconfiguration.
-- On hosts that expose `registerMemoryRuntime`, the built-in `memory_search`
-  tool now searches the same libraVDB-backed memory stores.
-- The daemon is a separate operational unit. Treat plugin lifecycle and daemon
-  lifecycle as different concerns.
-- The system is local-first by design. The critical retrieval path does not
-  require a remote embedding service.
-- The sidecar transport is stable and explicit, which makes it service-manager
-  friendly on macOS, Linux, and Windows.
-
-Good entry points:
-
-- [docs/install.md](./docs/install.md)
-- [docs/installation.md](./docs/installation.md)
-- [docs/uninstall.md](./docs/uninstall.md)
-- [docs/architecture.md](./docs/architecture.md)
-
-## For Researchers And Builders
-
-If you are studying retrieval, memory systems, or agent architecture, the
-interesting parts of this repo are:
-
-- continuity-aware assembly:
-  `C_total(q) = I union T_recent union Proj(V_rest, q)`
-- hybrid ranking instead of pure cosine retrieval
-- separation of authored invariants from searchable authored lore
-- durable-memory admission via domain-adaptive gating
-- local daemon architecture rather than in-process TS vector plumbing
-- compaction that preserves recent working context instead of flattening the
-  whole transcript
-
-Start here:
-
-- [docs/problem.md](./docs/problem.md)
-- [docs/architecture.md](./docs/architecture.md)
+`scripts/build-daemon.sh` prepares `.daemon-bin/libravdbd` for local plugin
+testing when you have a published daemon binary, a Homebrew daemon, or a local
+daemon checkout. For the full source workflow, read [Development](./docs/development.md).
 
 ## Runtime Facts
 
 - npm package: `@xdarkicex/openclaw-memory-libravdb`
 - OpenClaw plugin id: `libravdb-memory`
-- minimum host version: `openclaw >= 2026.3.22`
-- default daemon data path: `$HOME/.clawdb/data.libravdb`
-- default daemon endpoint on macOS/Linux:
-  `unix:$HOME/.clawdb/run/libravdb.sock`
-- default daemon endpoint on Windows:
-  `tcp:127.0.0.1:37421`
-
-## Repository Guide
-
-- [docs/install.md](./docs/install.md): quick install and lifecycle guide
-- [docs/installation.md](./docs/installation.md): full installation and
-  packaging reference
-- [docs/uninstall.md](./docs/uninstall.md): clean shutdown and removal
-- [docs/architecture.md](./docs/architecture.md): current implemented system
-  architecture
-
-## Current Constraint
-
-Because OpenClaw environments can be strict about postinstall downloads,
-daemon spawning, and scanner-visible binary bootstrap behavior, the cleanest
-supported user path today is:
-
-- install plugin
-- install daemon
-- assign both slots
-- let the plugin connect to a stable local endpoint
-
-That tradeoff is intentional. It keeps the plugin installation surface simple
-and auditable while preserving the full local memory engine at runtime.
-
-## Generated Contract Types
-
-TypeScript code in this plugin imports generated LibraVDB IPC types via the
-`@xdarkicex/libravdb-contracts` package:
-
-```typescript
-import { RpcRequest, RpcResponse } from "@xdarkicex/libravdb-contracts";
-```
-
-The generated types live in `libravdb-contracts/gen/ts/` and are produced by
-`buf generate` in that repository. A local `paths` alias in `tsconfig.json`
-wires the package name to that directory, so imports resolve without a
-`node_modules` install in the contracts repo.
-
-To regenerate after a proto change:
-
-```bash
-cd ../libravdb-contracts && buf generate
-# or from this repo:
-pnpm run generate:contracts
-```
-
-The alias is configured in both `tsconfig.json` (type-checking) and
-`tsconfig.build.json` (declaration emission). The generated `.ts` files use
-`@bufbuild/protobuf` at runtime, which must be available in the plugin's
-`node_modules`.
+- plugin kind: `memory`, `context-engine`
+- minimum OpenClaw host version: `>= 2026.3.22`
+- default data path: `$HOME/.clawdb/data.libravdb`
+- default macOS/Linux endpoint: `unix:$HOME/.clawdb/run/libravdb.sock`
+- default Windows endpoint: `tcp:127.0.0.1:37421`

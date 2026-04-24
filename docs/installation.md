@@ -1,123 +1,30 @@
 # Installation Reference
 
-This document is the full installation reference for `@xdarkicex/openclaw-memory-libravdb`. For the short path, use the root [README.md](../README.md).
+This is the full installation reference for
+`@xdarkicex/openclaw-memory-libravdb`. For the shortest path, use
+[install.md](./install.md).
 
 ## System Requirements
 
-| Requirement | Minimum | Recommended | Notes |
-|---|---|---|---|
-| Node.js | `22.0.0` | Latest LTS | Enforced in [`package.json`](../package.json) `engines.node` |
-| OpenClaw | `2026.3.22` | Current stable | Pinned by [`package.json`](../package.json) `peerDependencies.openclaw`; this is the earliest local tag confirmed to expose `definePluginEntry`, `registerContextEngine`, `registerMemoryPromptSection`, and the base plugin API shape this repo uses. Newer hosts may also expose the optional `registerMemoryRuntime` seam, which this plugin now adopts when available |
-| Go | `1.22` | Latest stable | Required only for local daemon development, not for normal plugin install |
-| Disk | about `1 GB` free for default Nomic install | `2 GB+` if provisioning optional T5 and leaving room for DB growth | See Resource Requirements below |
-| RAM | about `512 MB` for embed-only runtime | `1 GB+` if optional T5 summarizer is provisioned | Based on local RSS measurements below |
-| OS | macOS, Linux, Windows | Current stable releases | Unix uses a local socket; Windows uses TCP loopback |
-| Architecture | `arm64`, `x64` | Match published daemon release assets | Current release matrix builds five daemon targets |
+| Requirement | Minimum | Notes |
+|---|---:|---|
+| Node.js | `22.0.0` | Enforced by `package.json` `engines.node`. |
+| OpenClaw | `2026.3.22` | Earliest supported host version for this plugin API shape. |
+| `libravdbd` | published daemon asset | Required for normal runtime. |
+| Go | `1.22` | Required only for local daemon development. |
+| OS | macOS, Linux, Windows | Unix uses a local socket; Windows uses TCP loopback. |
+| Architecture | `arm64`, `x64` | Must match the daemon release asset. |
 
-The published plugin install path is scanner-clean and connect-only. End users should not need Go to install the OpenClaw plugin itself.
+Resource sizing and benchmark data live in
+[Performance and tuning](./performance-and-tuning.md).
 
-## Resource Requirements
+## Install Flow
 
-The numbers in this section are either directly measured from the current local
-build on `2026-03-29` or explicitly labeled as estimates.
+The published plugin package is connect-only. It installs TypeScript plugin code
+and docs; it does not compile Go code, download model assets, or supervise the
+daemon.
 
-### Disk
-
-Measured locally from this checkout:
-
-- daemon binary: `7.7M`
-- bundled Nomic model directory: `523M`
-- bundled MiniLM fallback model directory: `87M`
-- optional T5 summarizer directory: `371M`
-- unpacked ONNX Runtime directory on macOS arm64: `44M`
-- ONNX Runtime archive download on macOS arm64: `9.5M`
-
-Practical footprints:
-
-- default quality-first install without optional T5:
-  about `575 MB` (`7.7M + 523M + 44M`)
-- install with optional T5 summarizer:
-  about `946 MB`
-
-Vector payload lower bounds for stored turns, derived from embedding dimension:
-
-- MiniLM `384d`: `384 * 4 = 1536 bytes` per vector
-- Nomic `768d`: `768 * 4 = 3072 bytes` per vector
-
-Estimated lower-bound vector payload for `10,000` stored turns:
-
-- MiniLM: about `15.4 MB`
-- Nomic: about `30.7 MB`
-
-These are lower bounds for vector payload only. Actual on-disk LibraVDB usage is
-higher because text, metadata, collection structure, and index state are stored
-as well.
-
-### Memory
-
-Measured locally on Apple M2, `2026-03-29`, by starting the daemon and reading
-RSS after startup:
-
-- idle RSS with Nomic embedding path loaded and no optional T5 summarizer:
-  about `271,872 KB` (`~266 MB`)
-- idle RSS with Nomic plus local ONNX T5 summarizer loaded:
-  about `515,312 KB` (`~503 MB`)
-
-Not yet bench-measured in the repo:
-
-- RSS during active inference
-- peak RSS during compaction of large clusters
-
-Current operational estimate:
-
-- embedding inference should remain close to the embed-only idle baseline plus
-  transient ONNX workspace allocation
-- optional T5 provisioning roughly doubles steady-state RSS
-
-### CPU
-
-Measured locally from the existing Go benchmark harness on Apple M2,
-`2026-03-29`:
-
-- MiniLM bundled query embedding: about `22.6 ms/op`
-- MiniLM onnx-local query embedding: about `16.3 ms/op`
-- Nomic onnx-local query embedding: about `43.7 ms/op`
-
-Measured locally from a one-off 40-query timing sample on Apple M2,
-`2026-03-29`:
-
-- Nomic query embedding `p50`: about `18.61 ms`
-- Nomic query embedding `p95`: about `24.19 ms`
-
-Measured locally from a one-off synthetic 50-turn compaction run using the
-current extractive summarizer and Nomic embeddings:
-
-- `50`-turn extractive compaction wall time: about `3175 ms`
-
-Not yet bench-measured in the repo:
-
-- equivalent Linux x64 embedding latency on a reference machine
-- `50`-turn compaction wall time through the optional ONNX T5 abstractive path
-
-### Network
-
-Setup downloads are front-loaded. After installation, the plugin is local-first.
-
-Current setup assets:
-
-- Nomic model: about `522 MB`
-- T5-small encoder: about `135 MB`
-- T5-small decoder: about `222 MB`
-- ONNX Runtime macOS arm64 archive: about `9.5 MB`
-
-After install, the plugin makes no required network calls for embedding or
-extractive compaction. The only optional runtime network path is:
-
-- `summarizerBackend = "ollama-local"` or another custom summarizer endpoint
-
-## Standard Install
-
-### Fastest Path on macOS
+Recommended macOS path:
 
 ```bash
 brew tap xDarkicex/homebrew-openclaw-libravdb-memory
@@ -126,85 +33,46 @@ brew services start libravdbd
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 ```
 
-This is the preferred install flow for macOS users. It gives you a managed `libravdbd` service and a scanner-clean OpenClaw plugin package.
-
-### Plugin Package
-
-```bash
-openclaw plugins install @xdarkicex/openclaw-memory-libravdb
-```
-
-The plugin package installs as compiled OpenClaw runtime code without daemon bootstrap hooks.
-
-## Daemon Install
-
-Install and start `libravdbd` separately for the same user account that runs OpenClaw. The daemon owns the local DB engine and listens on a local endpoint.
-
-Default endpoints:
-
-- Homebrew on macOS: `unix:/opt/homebrew/var/clawdb/run/libravdb.sock`
-- macOS/Linux user-local installs: `unix:$HOME/.clawdb/run/libravdb.sock`
-- Windows: `tcp:127.0.0.1:37421`
-
-If you run the daemon on a different endpoint, set `plugins.configs.libravdb-memory.sidecarPath` in `~/.openclaw/openclaw.json`.
-
-### Linux
-
-Recommended layout:
+Manual Linux sketch:
 
 ```bash
 mkdir -p ~/.local/bin ~/.config/systemd/user
 curl -L -o ~/.local/bin/libravdbd <published-libravdbd-binary-url>
 chmod +x ~/.local/bin/libravdbd
-cp <published-libravdbd-service-template> ~/.config/systemd/user/libravdbd.service
+curl -L -o ~/.config/systemd/user/libravdbd.service <published-libravdbd-service-template-url>
 systemctl --user enable --now libravdbd.service
+openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 ```
 
-Then verify:
-
-```bash
-systemctl --user status libravdbd.service
-openclaw memory status
-```
-
-### Homebrew / macOS
-
-Homebrew users should normally install from the published tap:
-
-```bash
-brew tap xDarkicex/homebrew-openclaw-libravdb-memory
-brew install libravdbd
-brew services start libravdbd
-```
-
-With `sidecarPath: "auto"`, Homebrew installs on Apple Silicon should resolve to:
+Windows uses a loopback TCP endpoint by default:
 
 ```text
-unix:/opt/homebrew/var/clawdb/run/libravdb.sock
+tcp:127.0.0.1:37421
 ```
 
-User-local installs still default to:
+This repository does not yet include a full Windows service-install walkthrough.
+Use the published Windows daemon asset under your preferred process supervisor
+or run `libravdbd serve` in a terminal for validation.
 
-```text
-unix:$HOME/.clawdb/run/libravdb.sock
+## Activation
+
+Assign `libravdb-memory` to both OpenClaw slots:
+
+```json
+{
+  "plugins": {
+    "slots": {
+      "memory": "libravdb-memory",
+      "contextEngine": "libravdb-memory"
+    }
+  }
+}
 ```
 
-The daemon release pipeline generates a publish-ready `libravdbd.rb` formula asset for release assets named:
+Treat partial assignment as a misconfiguration. This plugin is designed to own
+memory prompt injection and the context-engine lifecycle together.
 
-- `libravdbd-darwin-arm64`
-- `libravdbd-darwin-amd64`
-- `libravdbd-linux-amd64`
-- `libravdbd-linux-arm64`
-
-The generated Homebrew formula also stages the bundled ONNX Runtime archive, the shipped embedding profile assets, and the T5 summarizer bundle into the install prefix so the daemon can start without a separate manual asset unpack step.
-
-If your GitHub Actions configuration includes:
-
-- public tap repository `xDarkicex/homebrew-openclaw-libravdb-memory`
-
-then tagged releases also push the generated formula into `Formula/libravdbd.rb` in that tap repository automatically.
-
-Example plugin config:
+If the daemon uses a non-default endpoint, add `sidecarPath`:
 
 ```json
 {
@@ -222,42 +90,27 @@ Example plugin config:
 }
 ```
 
-## Expected Install Shape
+When `sidecarPath` is `"auto"`, macOS/Linux endpoint resolution checks:
 
-Expected successful plugin install shape:
+1. `LIBRAVDB_RPC_ENDPOINT`
+2. `$HOME/.clawdb/run/libravdb.sock`
+3. `/opt/homebrew/var/clawdb/run/libravdb.sock`
+4. `/usr/local/var/clawdb/run/libravdb.sock`
+5. fallback to `$HOME/.clawdb/run/libravdb.sock`
+
+## Default Paths
+
+| Platform | Default endpoint |
+|---|---|
+| macOS/Linux user-local | `unix:$HOME/.clawdb/run/libravdb.sock` |
+| macOS Homebrew Apple Silicon | `unix:/opt/homebrew/var/clawdb/run/libravdb.sock` |
+| Windows | `tcp:127.0.0.1:37421` |
+
+Default data path:
 
 ```text
-Installed plugin: libravdb-memory
+$HOME/.clawdb/data.libravdb
 ```
-
-## Activation
-
-The manifest declares `kind: "context-engine"` and the runtime registers the memory prompt and memory runtime surfaces in code. It is still intended to own both the `memory` and `contextEngine` slots together. Treat partial slot assignment as a misconfiguration.
-
-Add this to `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "plugins": {
-    "slots": {
-      "memory": "libravdb-memory",
-      "contextEngine": "libravdb-memory"
-    }
-  }
-}
-```
-
-Notes:
-
-- This plugin should own both `memory` and `contextEngine`. Do not assign only one of them.
-- The plugin id is `libravdb-memory`. The npm package name used at install time is `@xdarkicex/openclaw-memory-libravdb`.
-- On newer OpenClaw versions, the plugin also registers a memory runtime bridge so the built-in `memory_search` tool can query libraVDB through the same sidecar-backed retrieval path.
-- On newer OpenClaw versions, the plugin also listens for `before_reset` and `session_end` so it can send best-effort lifecycle hints into the sidecar.
-- Those hints are journaled internally by the sidecar and can be inspected with `openclaw memory journal` without exposing them to normal memory export or recall.
-- The journal keeps only a bounded number of newest entries. Override that cap with `plugins.configs.libravdb-memory.lifecycleJournalMaxEntries` if you need a different retention window.
-- The plugin does not currently register `registerMemoryFlushPlan`; transcript ingest and compaction remain owned by the context-engine lifecycle and the sidecar.
-
-Without a slot entry, OpenClaw's default memory can continue to run in parallel.
 
 ## Verification
 
@@ -274,6 +127,7 @@ Expected output shape:
 │ Sidecar            │ running                      │
 │ Turns stored       │ 0                            │
 │ Memories stored    │ 0                            │
+│ Lifecycle hints    │ 0                            │
 │ Gate threshold     │ 0.35                         │
 │ Abstractive model  │ ready | not provisioned      │
 │ Embedding profile  │ all-minilm-l6-v2             │
@@ -283,51 +137,10 @@ Expected output shape:
 
 Interpretation:
 
-- `Sidecar=running` means the local `libravdbd` daemon answered JSON-RPC `health`.
-- `Gate threshold=0.35` confirms the default gating scalar boundary is active.
-- `Abstractive model=not provisioned` is acceptable. The system degrades to extractive compaction.
-
-## Contributor Install
-
-For contributors working from a clone:
-
-```bash
-pnpm check
-bash scripts/build-daemon.sh
-```
-
-This prepares a local daemon binary in `.daemon-bin/libravdbd` (or `.exe` on Windows) and copies any locally available model/runtime assets there for testing.
-
-Contributor default:
-
-- install `libravdbd` separately with Homebrew or release assets, then run `bash scripts/build-daemon.sh`
-
-Private local daemon development:
-
-- set `LIBRAVDBD_SOURCE_DIR=/path/to/libravdbd` to build from your local daemon repo
-- or set `LIBRAVDBD_BINARY_PATH=/path/to/libravdbd` to use a prebuilt local daemon binary
-
-## User-Service Templates
-
-Published daemon installs include matching user-service templates:
-
-- Linux user service: `libravdbd.service`
-- macOS LaunchAgent: `com.xdarkicex.libravdbd.plist`
-
-Linux example:
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp <published-libravdbd-service-template> ~/.config/systemd/user/libravdbd.service
-systemctl --user enable --now libravdbd.service
-```
-
-macOS example:
-
-1. Copy the published `com.xdarkicex.libravdbd.plist`
-2. Replace `__LIBRAVDBD_PATH__` and `__HOME__`
-3. Save it to `~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`
-4. Load it with `launchctl load ~/Library/LaunchAgents/com.xdarkicex.libravdbd.plist`
+- `Sidecar=running` means the daemon answered the health check.
+- `Gate threshold=0.35` confirms the default durable-memory gate.
+- `Abstractive model=not provisioned` is acceptable; compaction falls back to
+  the extractive path.
 
 ## Troubleshooting
 
@@ -335,47 +148,37 @@ macOS example:
 
 Common causes:
 
-- ONNX Runtime library missing or unpacked in the wrong place
-- downloaded model file hash mismatch
-- `libravdbd` not started for the current user
-- plugin pointed at the wrong endpoint
+- `libravdbd` is not running for the same user account as OpenClaw
+- `sidecarPath` points at the wrong endpoint
+- ONNX Runtime assets are missing or unpacked in the wrong place
+- a model asset failed checksum validation
 
-Check:
+Check the daemon first:
 
 ```bash
 openclaw memory status
+brew services restart libravdbd
 ```
 
-If the daemon is down, start it and verify the configured endpoint:
-
-```bash
-brew services start libravdbd
-```
-
-Or, without Homebrew:
+For foreground debugging:
 
 ```bash
 libravdbd serve
 ```
 
-On macOS/Linux, the default endpoint is `unix:$HOME/.clawdb/run/libravdb.sock`. On Windows, the default endpoint is `tcp:127.0.0.1:37421`.
-
 ### Hash mismatch
 
-Hash mismatch means one of:
+Do not bypass a checksum mismatch. Delete the corrupt or stale asset and rerun
+setup, or republish the release with corrected checksums.
 
-- the daemon asset is corrupt
-- the local cache is stale
-- the expected checksum is wrong
+### Default memory still appears active
 
-Do not bypass this. Delete the asset and rerun setup, or republish the release with corrected checksums.
+Confirm that `libravdb-memory` is assigned to both `memory` and
+`contextEngine`. Without both slot entries, OpenClaw's default memory path can
+continue to run in parallel.
 
-### Windows behavior
+### Lifecycle journal looks empty
 
-On Windows the daemon uses a loopback TCP endpoint instead of a Unix socket. This is expected. The plugin’s transport layer already handles the fallback.
-
-### Published daemon requirement
-
-The daemon must come from a published `libravdbd` binary for the current platform.
-If that download or checksum verification fails, setup stops instead of falling
-back to a local `go build`.
+The sidecar journal only records advisory lifecycle hints such as `before_reset`
+and `session_end`. It is bounded by `lifecycleJournalMaxEntries`, default `500`,
+and is not part of normal memory recall.

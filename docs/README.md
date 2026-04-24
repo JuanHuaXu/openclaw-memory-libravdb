@@ -1,16 +1,31 @@
-# Documentation Index
+# LibraVDB Memory Docs
 
-This index lists the public docs that remain in the main repo. Detailed math
-and private design notes are kept out of the public index on purpose.
+This directory holds the operational and design docs for the LibraVDB Memory
+OpenClaw plugin. The root README is the public entry point; these files go
+deeper by goal.
 
-- [installation.md](./installation.md) - Complete install, activation, verification, and troubleshooting reference.
-- [install.md](./install.md) - Practical lifecycle guide for Homebrew, the OpenClaw plugin, and manual daemon management.
-- [uninstall.md](./uninstall.md) - Clean shutdown and removal guide for the plugin, daemon, and optional local data.
-- [architecture.md](./architecture.md) - Public system overview covering the plugin, daemon, storage, retrieval, and compaction flow.
-- [problem.md](./problem.md) - Technical argument for replacing the stock OpenClaw memory lifecycle in this use case.
-- [dependencies.md](./dependencies.md) - Why LibraVDB and slab-based storage were chosen for this plugin.
-- [models.md](./models.md) - ONNX model strategy, latency trade-offs, and shipped model roles.
-- [security.md](./security.md) - Security model, untrusted-memory framing, isolation guarantees, and deletion boundaries.
-- [contributing.md](./contributing.md) - Contributor workflow, prerequisites, and invariant test expectations.
-- [architecture-decisions/README.md](./architecture-decisions/README.md) - Index of the repository ADRs.
-- [embedding-profiles.md](./embedding-profiles.md) - Shipped embedding profile baseline and current profile metadata.
+## Start Here
+
+- [Install](./install.md) - shortest supported install and daemon lifecycle path.
+- [Installation reference](./installation.md) - requirements, activation, verification, and troubleshooting.
+- [Uninstall](./uninstall.md) - safe disable, daemon shutdown, package removal, and optional data cleanup.
+
+## Understand The System
+
+- [Problem](./problem.md) - why this plugin replaces the stock memory lifecycle.
+- [Architecture](./architecture.md) - plugin, sidecar, storage, retrieval, and compaction overview.
+- [Dependency rationale](./dependencies.md) - why LibraVDB and slab-style storage fit this workload.
+- [Architecture decisions](./architecture-decisions/README.md) - accepted ADRs.
+
+## Configure And Operate
+
+- [Features](./features.md) - markdown ingestion, Obsidian ingestion, dream promotion, and memory CLI commands.
+- [Security](./security.md) - trust boundaries, untrusted-memory framing, collection isolation, and deletion limits.
+- [Embedding profiles](./embedding-profiles.md) - shipped embedding profile metadata and defaults.
+- [Models](./models.md) - local ONNX model strategy and summarization roles.
+
+## Tune, Test, And Build
+
+- [Performance and tuning](./performance-and-tuning.md) - resource expectations, tuning knobs, and LongMemEval harness.
+- [Development](./development.md) - source setup, local daemon builds, generated IPC files, and validation commands.
+- [Contributing](./contributing.md) - contributor expectations and gating-test invariants.
