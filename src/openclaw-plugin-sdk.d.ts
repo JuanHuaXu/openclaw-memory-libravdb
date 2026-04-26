@@ -15,17 +15,31 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
     name?(): string;
   }
 
+  // Minimal structural types for the fields we use
+  interface PluginsSlots {
+    memory?: string;
+  }
+
+  interface PluginsConfig {
+    slots?: PluginsSlots;
+  }
+
+  interface OpenClawConfig {
+    plugins?: PluginsConfig;
+  }
+
+  type PluginRegistrationMode = string;
+
   export interface OpenClawPluginApi {
-    registrationMode?: "full" | "discovery" | "setup-only" | "setup-runtime" | "cli-metadata";
-    config?: {
-      plugins?: {
-        slots?: {
-          memory?: string | null;
-          contextEngine?: string | null;
-        };
-      };
-    };
-    pluginConfig: unknown;
+    id: string;
+    name: string;
+    version?: string;
+    description?: string;
+    source: string;
+    rootDir?: string;
+    registrationMode: PluginRegistrationMode;
+    config: OpenClawConfig;
+    pluginConfig: Record<string, unknown>;
     logger?: {
       debug?(message: string): void;
       error(message: string): void;
@@ -33,7 +47,11 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
       warn?(message: string): void;
     };
     registerContextEngine(id: string, factory: () => unknown): void;
-    registerMemoryPromptSection(builder: MemoryPromptSectionBuilder): void;
+    registerMemoryCapability(id: string, capability: {
+      promptBuilder?: MemoryPromptSectionBuilder;
+      runtime?: unknown;
+    }): void;
+    registerMemoryPromptSection?(builder: MemoryPromptSectionBuilder): void;
     registerMemoryFlushPlan?(resolver: unknown): void;
     registerMemoryRuntime?(runtime: unknown): void;
     registerMemoryEmbeddingProvider?(provider: unknown): void;

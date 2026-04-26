@@ -148,3 +148,28 @@ test("full CLI registration exposes standard memory commands and LibraVDB operat
   assert.ok(search.options.includes("--max-results <n>"));
   assert.ok(search.options.includes("--json"));
 });
+
+test("non-full CLI registration exposes command structure without action handlers", () => {
+  let registered: RegisteredCli | null = null;
+  const api = {
+    config: selectedConfig,
+    registerCli(builder: unknown, opts: RegisteredCli["opts"]) {
+      registered = { builder: builder as RegisteredCli["builder"], opts };
+    },
+  };
+
+  registerMemoryCli(api as never, null, {});
+
+  assert.ok(registered);
+  const cli = registered as RegisteredCli;
+  const program = new FakeCommand("openclaw");
+  cli.builder({ program });
+
+  const memory = program.commands.find((command) => command.name() === "memory");
+  assert.ok(memory);
+  assert.deepEqual(
+    memory.commands.map((command) => command.name()),
+    ["status", "index", "search", "flush", "export", "journal", "dream-promote"],
+  );
+  assert.ok(memory.commands.every((command) => command.handler === null));
+});

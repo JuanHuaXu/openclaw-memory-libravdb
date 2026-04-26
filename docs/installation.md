@@ -18,6 +18,10 @@ This is the full installation reference for
 Resource sizing and benchmark data live in
 [Performance and tuning](./performance-and-tuning.md).
 
+OpenClaw compatibility note:
+
+- the plugin is currently verified against OpenClaw `2026.4.23`
+
 ## Install Flow
 
 The published plugin package is connect-only. It installs TypeScript plugin code

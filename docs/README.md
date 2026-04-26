@@ -24,8 +24,8 @@ deeper by goal.
 - [Embedding profiles](./embedding-profiles.md) - shipped embedding profile metadata and defaults.
 - [Models](./models.md) - local ONNX model strategy and summarization roles.
 
-## Tune, Test, And Build
+## Advanced And Source Docs
 
-- [Performance and tuning](./performance-and-tuning.md) - resource expectations, tuning knobs, and LongMemEval harness.
+- [Performance and tuning](./performance-and-tuning.md) - resource expectations and tuning knobs.
 - [Development](./development.md) - source setup, local daemon builds, generated IPC files, and validation commands.
-- [Contributing](./contributing.md) - contributor expectations and gating-test invariants.
+- [Contributing](./contributing.md) - contributor workflow and repository expectations.

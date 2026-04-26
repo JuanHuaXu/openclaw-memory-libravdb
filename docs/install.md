@@ -4,6 +4,10 @@ LibraVDB Memory is a connect-only OpenClaw plugin. Install the plugin as a
 normal package, install `libravdbd` separately, and point the plugin at the
 daemon endpoint when you need a non-default location.
 
+OpenClaw compatibility note:
+
+- the plugin is currently verified against OpenClaw `2026.4.23`
+
 For deeper operational detail, use the full
 [installation reference](./installation.md).
 

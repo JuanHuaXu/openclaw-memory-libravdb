@@ -51,9 +51,6 @@ Then activate both plugin slots in `~/.openclaw/openclaw.json`:
 
 Verify the daemon and plugin:
 
-```bash
-openclaw memory status
-```
 
 Healthy output should show `Sidecar=running`, stored memory counts, the active
 gate threshold, and the loaded embedding profile.
@@ -65,6 +62,10 @@ Runtime requirements:
 - OpenClaw `>= 2026.3.22`
 - Node.js `>= 22`
 - a separately installed `libravdbd` daemon
+
+Compatibility note:
+
+- this plugin is currently verified against OpenClaw `2026.4.23`
 
 Default endpoints:
 
@@ -143,7 +144,7 @@ Use [Install](./docs/install.md) for daemon lifecycle commands and
 - Understand the design: [Problem](./docs/problem.md), [Architecture](./docs/architecture.md), [ADRs](./docs/architecture-decisions/README.md)
 - Operate safely: [Security](./docs/security.md), [Uninstall](./docs/uninstall.md)
 - Configure optional inputs: [Features](./docs/features.md), [Embedding profiles](./docs/embedding-profiles.md), [Models](./docs/models.md)
-- Tune or benchmark: [Performance and tuning](./docs/performance-and-tuning.md)
+- Advanced operations: [Performance and tuning](./docs/performance-and-tuning.md)
 - Work from source: [Development](./docs/development.md), [Contributing](./docs/contributing.md)
 
 ## From Source
