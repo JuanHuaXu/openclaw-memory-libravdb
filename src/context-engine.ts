@@ -13,7 +13,8 @@ import {
   CompactSessionRequest,
   CompactSessionResponse,
 } from "./generated/libravdb/ipc/v1/rpc_pb.js";
-import { resolveDurableNamespace } from "./durable-namespace.js";
+import { resolveIdentity, type ResolvedIdentity } from "./identity.js";
+import { resolveScopes } from "./memory-scopes.js";
 
 type KernelCompatibleMessage = {
   role: string;
@@ -393,6 +394,27 @@ export function buildContextEngineFactory(
   recallCache: RecallCache<SearchResult>,
   logger: LoggerLike = console,
 ) {
+  let cachedIdentity: ResolvedIdentity | null = null;
+
+  function resolveUserId(args?: {
+    userIdOverride?: string;
+    sessionKey?: string;
+  }): string {
+    // Framework-provided userId takes priority (channels, future SDK compat).
+    const fwUserId = args?.userIdOverride?.trim();
+    if (fwUserId) return fwUserId;
+
+    if (!cachedIdentity) {
+      cachedIdentity = resolveIdentity({
+        configUserId: cfg.userId,
+        identityPath: cfg.identityPath,
+        sessionKey: args?.sessionKey,
+        logger,
+      });
+    }
+    return cachedIdentity.userId;
+  }
+
   const getDynamicCompactThreshold = (tokenBudget: number | undefined): number | undefined =>
     resolveDynamicCompactThreshold(
       tokenBudget,
@@ -540,6 +562,10 @@ export function buildContextEngineFactory(
     info: { id: "libravdb-memory", name: "LibraVDB Memory", ownsCompaction: true },
     ownsCompaction: true,
     async bootstrap(args: { sessionId: string; sessionKey?: string; userId?: string }) {
+      const userId = resolveUserId({
+        userIdOverride: args.userId,
+        sessionKey: args.sessionKey,
+      });
       const kernel = runtime.getKernel();
       if (kernel) {
         try {
@@ -553,20 +579,27 @@ export function buildContextEngineFactory(
         return await kernel.bootstrapSession({
           sessionId: args.sessionId,
           sessionKey: args.sessionKey,
-          userId: args.userId,
+          userId,
         });
       }
       const rpc = await runtime.getRpc();
-      return await rpc.call("bootstrap_session_kernel", args);
+      return await rpc.call("bootstrap_session_kernel", {
+        ...args,
+        userId,
+      });
     },
     async ingest(args: { sessionId: string; sessionKey?: string; userId?: string; message: { role: string; content: unknown; id?: string }; isHeartbeat?: boolean }) {
+      const userId = resolveUserId({
+        userIdOverride: args.userId,
+        sessionKey: args.sessionKey,
+      });
       const message = normalizeKernelMessage(args.message);
       const kernel = runtime.getKernel();
       if (kernel) {
         return await kernel.ingestMessage({
           sessionId: args.sessionId,
           sessionKey: args.sessionKey,
-          userId: args.userId,
+          userId,
           message,
           isHeartbeat: args.isHeartbeat,
         });
@@ -574,6 +607,7 @@ export function buildContextEngineFactory(
       const rpc = await runtime.getRpc();
       return await rpc.call("ingest_message_kernel", {
         ...args,
+        userId,
         message,
       });
     },
@@ -586,6 +620,10 @@ export function buildContextEngineFactory(
       prompt?: string;
       currentTokenCount?: number;
     }): Promise<OpenClawCompatibleAssembleResult> {
+      const userId = resolveUserId({
+        userIdOverride: args.userId,
+        sessionKey: args.sessionKey,
+      });
       const messages = normalizeKernelMessages(args.messages);
       const currentContextTokens = resolvePredictiveCompactionTokenCount({
         currentTokenCount: args.currentTokenCount,
@@ -640,7 +678,7 @@ export function buildContextEngineFactory(
             normalizeAssembleResult(await kernel.assembleContext({
               sessionId: args.sessionId,
               sessionKey: args.sessionKey,
-              userId: args.userId,
+              userId,
               queryText: args.prompt ?? "",
               visibleMessages: messages,
               tokenBudget: args.tokenBudget,
@@ -663,7 +701,7 @@ export function buildContextEngineFactory(
         const resp = await rpc.call<AssembleContextInternalResponse>("assemble_context_internal", {
           sessionId: args.sessionId,
           sessionKey: args.sessionKey,
-          userId: args.userId,
+          userId,
           messages,
           tokenBudget: args.tokenBudget,
           prompt: args.prompt,
@@ -698,6 +736,10 @@ export function buildContextEngineFactory(
       tokenBudget?: number;
       runtimeContext?: Record<string, unknown>;
     }) {
+      const userId = resolveUserId({
+        userIdOverride: args.userId,
+        sessionKey: args.sessionKey,
+      });
       const messages = normalizeKernelMessages(args.messages);
       const kernel = runtime.getKernel();
       const currentTokenCount = normalizeCurrentTokenCount(
@@ -709,7 +751,7 @@ export function buildContextEngineFactory(
         const result = await kernel.afterTurn({
           sessionId: args.sessionId,
           sessionKey: args.sessionKey,
-          userId: args.userId,
+          userId,
           messages,
           prePromptMessageCount: args.prePromptMessageCount,
           isHeartbeat: args.isHeartbeat,
@@ -724,6 +766,7 @@ export function buildContextEngineFactory(
       const rpc = await runtime.getRpc();
       const result = await rpc.call("after_turn_kernel", {
         ...args,
+        userId,
         messages,
       });
       await performAfterTurnPredictiveCompaction({

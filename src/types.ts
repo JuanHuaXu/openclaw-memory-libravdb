@@ -2,6 +2,16 @@
 export interface PluginConfig {
   dbPath?: string;
   sidecarPath?: string;
+  /** Stable identity for cross-session durable memory. When set, all sessions
+   *  share memories under user:{userId}. When unset, the plugin auto-derives
+   *  identity from the OS and persists it to the identity file. */
+  userId?: string;
+  /** Custom path to the identity JSON file. Defaults to
+   *  ~/.openclaw/libravdb-identity.json. */
+  identityPath?: string;
+  /** When false, only session-scoped memories are retrieved. User-scoped
+   *  durable recall is skipped entirely. Defaults to true. */
+  crossSessionRecall?: boolean;
   useSessionRecallProjection?: boolean;
   useSessionSummarySearchExperiment?: boolean;
   embeddingRuntimePath?: string;
