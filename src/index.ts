@@ -19,11 +19,14 @@ export function register(api: OpenClawPluginApi) {
     return;
   }
 
-  const isFullMode = (api.registrationMode as string) === "full";
+  const mode = api.registrationMode as string;
+  const isFullMode = mode === "full";
   const cfg = api.pluginConfig as PluginConfig;
 
-  // Null in non-full mode: cli.ts skips action handlers when runtime is null.
-  const runtimeOrNull = isFullMode
+  // OpenClaw lazy-loads plugin-owned CLI commands through discovery mode.
+  // Provide a runtime there so subcommands attach real handlers, but keep the
+  // long-lived memory/context-engine registrations gated to full mode only.
+  const runtimeOrNull = (isFullMode || mode === "discovery")
     ? createPluginRuntime(cfg, api.logger ?? console)
     : null;
   registerMemoryCli(api, runtimeOrNull, cfg, api.logger ?? console);
