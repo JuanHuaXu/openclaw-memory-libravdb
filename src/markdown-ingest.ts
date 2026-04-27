@@ -434,7 +434,7 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
       this.fileStates.delete(sourceDoc);
       return;
     }
-    await this.ingestMarkdownDocument(sourceDoc, text, rootState.root, relativePath, fileHash, stat.size, stat.mtimeMs);
+    await this.ingestMarkdownDocument(sourceDoc, text, rootState.root, relativePath, fileHash, stat.size, Math.trunc(stat.mtimeMs));
     this.fileStates.set(sourceDoc, {
       root: rootState.root,
       sourceDoc,
@@ -466,7 +466,7 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
         sourceKind: this.kind,
         fileHash,
         sourceSize,
-        sourceMtimeMs,
+        sourceMtimeMs: Math.trunc(sourceMtimeMs),
         ingestVersion: MARKDOWN_INGEST_VERSION,
         hashBackend: HASH_BACKEND,
       },
