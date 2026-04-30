@@ -22,6 +22,41 @@
       "sidecarPath": {
         "type": "string"
       },
+      "userId": {
+        "type": "string",
+        "description": "Stable identity for cross-session durable memory. When set, sessions share memories under user:{userId}."
+      },
+      "identityPath": {
+        "type": "string",
+        "description": "Custom path for the auto-derived identity JSON file."
+      },
+      "crossSessionRecall": {
+        "type": "boolean",
+        "default": true,
+        "description": "When false, only session-scoped memories are retrieved; durable user recall is skipped."
+      },
+      "useSessionRecallProjection": {
+        "type": "boolean"
+      },
+      "grpcEndpoint": {
+        "type": "string",
+        "description": "Optional gRPC kernel endpoint for hosts using the daemon kernel transport."
+      },
+      "authoredHardBudgetFraction": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "authoredSoftBudgetFraction": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "elevatedGuidanceBudgetFraction": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
       "useSessionSummarySearchExperiment": {
         "type": "boolean"
       },
