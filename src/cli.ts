@@ -421,12 +421,13 @@ async function runSearch(
       agentId: opts?.agent,
     });
     const maxResults = normalizeLimit(opts?.maxResults ?? opts?.limit);
-    const minScore = normalizeNumber(opts?.minScore);
+    const explicitMinScore = normalizeNumber(opts?.minScore);
+    const minScore = explicitMinScore ?? resolveDefaultSearchMinScore(manager.status(), cfg);
     const results = (await manager.search(
       {
         query,
         ...(maxResults ? { maxResults } : {}),
-        ...(minScore !== undefined ? { minScore } : {}),
+        minScore,
       },
     )) as Array<{
       path: string;
@@ -452,6 +453,10 @@ async function runSearch(
     logger.error(`LibraVDB search failed: ${formatError(error)}`);
     process.exitCode = 1;
   }
+}
+
+function resolveDefaultSearchMinScore(status: { gatingThreshold?: number } | undefined, cfg: PluginConfig): number {
+  return normalizeNumber(status?.gatingThreshold) ?? normalizeNumber(cfg.ingestionGateThreshold) ?? 0.35;
 }
 
 async function runFlush(runtime: PluginRuntime, opts: CliOptionBag | undefined, logger: LoggerLike): Promise<void> {
