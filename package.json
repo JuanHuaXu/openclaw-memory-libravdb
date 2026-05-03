@@ -1,6 +1,6 @@
 {
   "name": "@xdarkicex/openclaw-memory-libravdb",
-  "version": "1.4.27",
+  "version": "1.4.28",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
