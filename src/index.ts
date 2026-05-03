@@ -140,6 +140,13 @@ export function register(api: OpenClawPluginApi) {
     },
   });
 
+  api.registerRuntimeLifecycle?.({
+    async onDisable() {
+      logger.info?.("LibraVDB disable — shutting down runtime");
+      await runtime.shutdown();
+    },
+  });
+
   api.on("before_reset", createBeforeResetHook(runtime, api.logger ?? console));
   api.on("session_end", createSessionEndHook(runtime, api.logger ?? console));
   api.on("gateway_stop", async () => {

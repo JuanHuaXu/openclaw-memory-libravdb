@@ -95,6 +95,12 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
       start(ctx: unknown): void | Promise<void>;
       stop?(ctx: unknown): void | Promise<void>;
     }): void;
+    registerRuntimeLifecycle?(callbacks: {
+      onDisable?(): void | Promise<void>;
+      onDelete?(): void | Promise<void>;
+      onReload?(): void | Promise<void>;
+      onReset?(): void | Promise<void>;
+    }): void;
     on(event: string, handler: (...args: unknown[]) => void | Promise<void>, opts?: { priority?: number }): void;
   }
 
