@@ -247,7 +247,7 @@ test("search command applies the status gate threshold by default", async () => 
               return {
                 ok: true,
                 message: "ok",
-                gatingThreshold: 0.35,
+                gatingThreshold: 0.5,
                 embeddingProfile: "all-minilm-l6-v2",
               };
             }
@@ -258,6 +258,12 @@ test("search command applies the status gate threshold by default", async () => 
                     id: "low",
                     score: 0.25,
                     text: "weak unrelated memory",
+                    metadata: { collection: "user:test-user" },
+                  },
+                  {
+                    id: "mid",
+                    score: 0.4,
+                    text: "mid-range memory gated by status threshold",
                     metadata: { collection: "user:test-user" },
                   },
                   {
@@ -300,6 +306,7 @@ test("search command applies the status gate threshold by default", async () => 
   }
 
   assert.equal(logs.some((line) => line.includes("weak unrelated memory")), false);
+  assert.equal(logs.some((line) => line.includes("mid-range memory gated by status threshold")), false);
   assert.equal(logs.some((line) => line.includes("strong relevant memory")), true);
 });
 
