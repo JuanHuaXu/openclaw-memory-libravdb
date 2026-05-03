@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildContextEngineFactory } from "../../src/context-engine.js";
 import { resolveIdentity } from "../../src/identity.js";
-import type { PluginConfig, SearchResult, RecallCache } from "../../src/types.js";
+import type { PluginConfig, SearchResult } from "../../src/types.js";
 import type { PluginRuntime } from "../../src/plugin-runtime.js";
 import type { RpcClient } from "../../src/rpc.js";
 
@@ -45,25 +45,213 @@ class FakeRpc {
   }
 }
 
-function fakeRecallCache(): RecallCache<SearchResult> {
-  const store = new Map<string, unknown>();
-  return {
-    put(entry) { store.set(entry.userId + entry.queryText, entry); },
-    get(key) { return store.get(key.userId + key.queryText) as never; },
-    take(key) { return store.get(key.userId + key.queryText) as never; },
-    clearUser() { store.clear(); },
-  };
-}
-
 function fakeRuntime(rpc: FakeRpc): PluginRuntime {
   return {
     getRpc: async () => rpc as unknown as RpcClient,
-    getKernel: () => null,
+    getKernel: async () => null,
     emitLifecycleHint: async () => {},
     onShutdown: () => {},
     shutdown: async () => {},
   };
 }
+
+function makeKernelFirstRuntime(kernel: object) {
+  let getRpcCalls = 0;
+  const runtime: PluginRuntime = {
+    getRpc: async () => {
+      getRpcCalls += 1;
+      throw new Error("RPC should not be used when kernel is available");
+    },
+    getKernel: async () => kernel as never,
+    emitLifecycleHint: async () => {},
+    onShutdown: async () => {},
+    shutdown: async () => {},
+  };
+  return { runtime, getRpcCalls: () => getRpcCalls };
+}
+
+test("context engine uses gRPC kernel on cold bootstrap without falling back to RPC", async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const kernel = {
+    initializeSession: async (params: Record<string, unknown>) => {
+      calls.push({ method: "initializeSession", params });
+      return { ok: true };
+    },
+    bootstrapSession: async (params: Record<string, unknown>) => {
+      calls.push({ method: "bootstrapSession", params });
+      return { ok: true };
+    },
+  };
+  const { runtime, getRpcCalls } = makeKernelFirstRuntime(kernel);
+  const engine = buildContextEngineFactory(runtime, { userId: "fixed-user" });
+
+  await engine.bootstrap({ sessionId: "s1", sessionKey: "sk1" });
+
+  assert.equal(getRpcCalls(), 0);
+  assert.deepEqual(calls.map((call) => call.method), ["initializeSession", "bootstrapSession"]);
+  assert.equal(calls[1]?.params.sessionId, "s1");
+  assert.equal(calls[1]?.params.sessionKey, "sk1");
+  assert.equal(calls[1]?.params.userId, "fixed-user");
+});
+
+test("context engine falls back to RPC when kernel lookup fails during bootstrap", async () => {
+  const rpc = new FakeRpc();
+  const warnings: string[] = [];
+  const runtime: PluginRuntime = {
+    getRpc: async () => rpc as unknown as RpcClient,
+    getKernel: async () => {
+      throw new Error("kernel unavailable");
+    },
+    emitLifecycleHint: async () => {},
+    onShutdown: async () => {},
+    shutdown: async () => {},
+  };
+  const engine = buildContextEngineFactory(runtime, { userId: "fixed-user" }, {
+    error() {},
+    info() {},
+    warn(message: string) { warnings.push(message); },
+  });
+
+  await engine.bootstrap({ sessionId: "s1", sessionKey: "sk1" });
+
+  const call = rpc.calls.find((c) => c.method === "bootstrap_session_kernel");
+  assert.ok(call, "bootstrap should fall back to sidecar RPC");
+  assert.equal(call.params.sessionId, "s1");
+  assert.equal(call.params.sessionKey, "sk1");
+  assert.equal(call.params.userId, "fixed-user");
+  assert.match(warnings[0] ?? "", /bootstrap kernel unavailable/);
+});
+
+test("context engine returns compact failure instead of throwing when kernel and RPC are unavailable", async () => {
+  const runtime: PluginRuntime = {
+    getRpc: async () => {
+      throw new Error("sidecar unavailable");
+    },
+    getKernel: async () => {
+      throw new Error("kernel unavailable");
+    },
+    emitLifecycleHint: async () => {},
+    onShutdown: async () => {},
+    shutdown: async () => {},
+  };
+  const engine = buildContextEngineFactory(runtime, { userId: "fixed-user" });
+
+  const result = await engine.compact({ sessionId: "s1", tokenBudget: 1000 });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.compacted, false);
+  assert.match(result.reason ?? "", /sidecar unavailable/);
+});
+
+test("context engine uses gRPC kernel on cold ingest without falling back to RPC", async () => {
+  let ingestParams: Record<string, unknown> | null = null;
+  const kernel = {
+    ingestMessage: async (params: Record<string, unknown>) => {
+      ingestParams = params;
+      return { ingested: true };
+    },
+  };
+  const { runtime, getRpcCalls } = makeKernelFirstRuntime(kernel);
+  const engine = buildContextEngineFactory(runtime, { userId: "fixed-user" });
+
+  await engine.ingest({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    message: makeMessage("user", "remember this"),
+  });
+
+  assert.equal(getRpcCalls(), 0);
+  assert.ok(ingestParams);
+  const params = ingestParams as Record<string, unknown>;
+  assert.equal(params.sessionId, "s1");
+  assert.equal(params.sessionKey, "sk1");
+  assert.equal(params.userId, "fixed-user");
+  assert.deepEqual(params.message, { role: "user", content: "remember this" });
+});
+
+test("context engine uses gRPC kernel on cold afterTurn without falling back to RPC", async () => {
+  let afterTurnParams: Record<string, unknown> | null = null;
+  const kernel = {
+    afterTurn: async (params: Record<string, unknown>) => {
+      afterTurnParams = params;
+      return { ok: true, turnCount: 1 };
+    },
+  };
+  const { runtime, getRpcCalls } = makeKernelFirstRuntime(kernel);
+  const engine = buildContextEngineFactory(runtime, { userId: "fixed-user" });
+
+  await engine.afterTurn({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "hello"), makeMessage("assistant", "hi")],
+  });
+
+  assert.equal(getRpcCalls(), 0);
+  assert.ok(afterTurnParams);
+  const params = afterTurnParams as Record<string, unknown>;
+  assert.equal(params.sessionId, "s1");
+  assert.equal(params.sessionKey, "sk1");
+  assert.equal(params.userId, "fixed-user");
+  assert.deepEqual(params.messages, [
+    { role: "user", content: "hello" },
+    { role: "assistant", content: "hi" },
+  ]);
+});
+
+test("context engine uses gRPC kernel on cold compact without falling back to RPC", async () => {
+  let compactParams: Record<string, unknown> | null = null;
+  const kernel = {
+    compactSession: async (params: Record<string, unknown>) => {
+      compactParams = params;
+      return { ok: true, didCompact: true, tokensAfter: 256 };
+    },
+  };
+  const { runtime, getRpcCalls } = makeKernelFirstRuntime(kernel);
+  const engine = buildContextEngineFactory(runtime, { userId: "fixed-user" });
+
+  const result = await engine.compact({ sessionId: "s1", tokenBudget: 1000, currentTokenCount: 1200 });
+
+  assert.equal(getRpcCalls(), 0);
+  assert.ok(compactParams);
+  const params = compactParams as Record<string, unknown>;
+  assert.equal(params.sessionId, "s1");
+  assert.equal(params.targetSize, 1000);
+  assert.equal(params.currentTokenCount, 1200);
+  assert.equal(result.ok, true);
+  assert.equal(result.compacted, true);
+});
+
+test("context engine uses gRPC kernel on cold assemble without falling back to RPC", async () => {
+  let assembleParams: Record<string, unknown> | null = null;
+  const kernel = {
+    assembleContext: async (params: Record<string, unknown>) => {
+      assembleParams = params;
+      return {
+        messages: [{ role: "assistant", content: "kernel context" }],
+        estimatedTokens: 12,
+        systemPromptAddition: "",
+      };
+    },
+  };
+  const { runtime, getRpcCalls } = makeKernelFirstRuntime(kernel);
+  const engine = buildContextEngineFactory(runtime, { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "hello")],
+    prompt: "hello",
+    tokenBudget: 4000,
+  });
+
+  assert.equal(getRpcCalls(), 0);
+  assert.ok(assembleParams);
+  const params = assembleParams as Record<string, unknown>;
+  assert.equal(params.sessionId, "s1");
+  assert.equal(params.sessionKey, "sk1");
+  assert.equal(params.userId, "fixed-user");
+  assert.deepEqual(assembled.messages, [{ role: "assistant", content: "kernel context" }]);
+});
 
 function makeMessage(role: string, content: string, id?: string) {
   return { role, content, ...(id ? { id } : {}) };
@@ -77,7 +265,7 @@ function makeMessage(role: string, content: string, id?: string) {
 test("context engine bootstrap resolves config userId and passes it to daemon", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "fixed-user" };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   await engine.bootstrap({ sessionId: "s1", sessionKey: "sk1" });
 
@@ -91,7 +279,7 @@ test("context engine bootstrap resolves config userId and passes it to daemon", 
 test("context engine ingest resolves config userId and passes it to daemon", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "fixed-user" };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   await engine.ingest({
     sessionId: "s1",
@@ -111,7 +299,7 @@ test("context engine ingest resolves config userId and passes it to daemon", asy
 test("context engine afterTurn resolves config userId and passes messages to daemon", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "fixed-user" };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   await engine.afterTurn({
     sessionId: "s1",
@@ -131,7 +319,7 @@ test("context engine afterTurn resolves config userId and passes messages to dae
 test("context engine assemble resolves config userId and passes it to daemon", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "fixed-user" };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   await engine.assemble({
     sessionId: "s1",
@@ -165,7 +353,7 @@ test("context engine assemble injects exact factual recall for marker tokens", a
     },
   ];
   const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   const assembled = await engine.assemble({
     sessionId: "s1",
@@ -211,7 +399,7 @@ test("context engine exact recall checks existing facts per block", async () => 
       metadata: { collection: "user:fixed-user" },
     },
   ];
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), { userId: "fixed-user" }, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), { userId: "fixed-user" });
 
   const assembled = await engine.assemble({
     sessionId: "s1",
@@ -246,7 +434,7 @@ test("context engine exact recall skips additions that would exceed the token bu
     },
   ];
   const warnings: string[] = [];
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), { userId: "fixed-user" }, fakeRecallCache(), {
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), { userId: "fixed-user" }, {
     error() {},
     info() {},
     warn(message: string) { warnings.push(message); },
@@ -280,13 +468,13 @@ test("context engine assemble keeps daemon result when exact recall RPC acquisit
       if (getRpcCalls === 1) return rpc as unknown as RpcClient;
       throw new Error("socket unavailable");
     },
-    getKernel: () => null,
+    getKernel: async () => null,
     emitLifecycleHint: async () => {},
     onShutdown: () => {},
     shutdown: async () => {},
   };
   const warnings: string[] = [];
-  const engine = buildContextEngineFactory(runtime, { userId: "fixed-user" }, fakeRecallCache(), {
+  const engine = buildContextEngineFactory(runtime, { userId: "fixed-user" }, {
     error() {},
     info() {},
     warn(message: string) { warnings.push(message); },
@@ -317,7 +505,7 @@ test("exact recall extracts quoted phrases from user queries", async () => {
     },
   ];
   const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   const assembled = await engine.assemble({
     sessionId: "s1",
@@ -348,7 +536,7 @@ test("exact recall extracts mixed-case identifiers with separators", async () =>
     },
   ];
   const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   const assembled = await engine.assemble({
     sessionId: "s1",
@@ -370,7 +558,7 @@ test("exact recall extracts mixed-case identifiers with separators", async () =>
 test("exact recall skips common query words even when in quoted phrases", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "fixed-user", topK: 4 };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   // All tokens are common query words — no exact recall should fire
   await engine.assemble({
@@ -392,7 +580,7 @@ test("exact recall skips common query words even when in quoted phrases", async 
 test("identity is stable across multiple sessions with the same config userId", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "fixed-user" };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   // Session A
   await engine.bootstrap({ sessionId: "session-a", sessionKey: "key-a" });
@@ -438,7 +626,7 @@ test("identity is stable across multiple sessions with the same config userId", 
 test("framework-provided userId override takes priority over config userId", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "config-user" };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   await engine.bootstrap({ sessionId: "s1", sessionKey: "sk1", userId: "framework-user" });
 
@@ -459,7 +647,7 @@ test("framework-provided userId override takes priority over config userId", asy
 test("identity is resolved and sessionKey forwarded when no config userId is set", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = {};
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   await engine.bootstrap({ sessionId: "s1", sessionKey: "provided-key" });
 
@@ -478,7 +666,7 @@ test("identity is resolved and sessionKey forwarded when no config userId is set
 test("sessionId is non-empty in every lifecycle hook across bootstrap/ingest/afterTurn", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "u1" };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   const sessionId = "conformance-session-1";
   await engine.bootstrap({ sessionId, sessionKey: "sk" });
@@ -504,7 +692,7 @@ test("sessionId is non-empty in every lifecycle hook across bootstrap/ingest/aft
 test("ingest forwards isHeartbeat flag to the daemon", async () => {
   const rpc = new FakeRpc();
   const cfg: PluginConfig = { userId: "u1" };
-  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg, fakeRecallCache());
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), cfg);
 
   await engine.ingest({
     sessionId: "s1",

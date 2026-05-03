@@ -2,7 +2,6 @@ import type { PluginRuntime } from "./plugin-runtime.js";
 import type {
   LoggerLike,
   PluginConfig,
-  RecallCache,
   SearchResult,
 } from "./types.js";
 import {
@@ -490,7 +489,6 @@ export function normalizeAssembleResult(result: {
 export function buildContextEngineFactory(
   runtime: PluginRuntime,
   cfg: PluginConfig,
-  recallCache: RecallCache<SearchResult>,
   logger: LoggerLike = console,
 ) {
   let cachedIdentity: ResolvedIdentity | null = null;
@@ -520,6 +518,18 @@ export function buildContextEngineFactory(
       cfg.compactThreshold,
       cfg.compactionThresholdFraction,
     );
+
+  async function getKernelOrNull(phase: string): Promise<Awaited<ReturnType<PluginRuntime["getKernel"]>>> {
+    try {
+      return await runtime.getKernel();
+    } catch (error) {
+      logger.warn?.(
+        `LibraVDB ${phase} kernel unavailable, falling back to sidecar: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
 
   const buildAssemblyConfig = (tokenBudget: number | undefined) => ({
     useSessionRecallProjection: cfg.useSessionRecallProjection,
@@ -679,7 +689,7 @@ export function buildContextEngineFactory(
     currentTokenCount?: number;
   }): Promise<OpenClawCompatibleCompactResult> {
     const request = buildCompactSessionRequest(args);
-    const kernel = runtime.getKernel();
+    const kernel = await getKernelOrNull("compact");
     try {
       if (kernel) {
         return normalizeCompactResult(await kernel.compactSession(request), {
@@ -757,7 +767,7 @@ export function buildContextEngineFactory(
         `LibraVDB bootstrap sessionId=${args.sessionId} userId=${userId} ` +
         `sessionKey=${args.sessionKey ?? "(none)"}`,
       );
-      const kernel = runtime.getKernel();
+      const kernel = await getKernelOrNull("bootstrap");
       if (kernel) {
         try {
           await kernel.initializeSession({
@@ -791,7 +801,7 @@ export function buildContextEngineFactory(
         `contentLen=${message.content.length}`,
       );
       try {
-        const kernel = runtime.getKernel();
+        const kernel = await getKernelOrNull("ingest");
         if (kernel) {
           return await kernel.ingestMessage({
             sessionId: args.sessionId,
@@ -875,7 +885,7 @@ export function buildContextEngineFactory(
           return buildBudgetFallbackContext(messages, args.tokenBudget);
         }
       }
-      const kernel = runtime.getKernel();
+      const kernel = await getKernelOrNull("assemble");
       if (kernel) {
         try {
           const assembled = normalizeAssembleResult(await kernel.assembleContext({
@@ -966,7 +976,7 @@ export function buildContextEngineFactory(
         `messageCount=${msgCount} heartbeat=${args.isHeartbeat ?? false}`,
       );
       try {
-        const kernel = runtime.getKernel();
+        const kernel = await getKernelOrNull("afterTurn");
         const currentTokenCount = normalizeCurrentTokenCount(
           typeof args.runtimeContext?.currentTokenCount === "number"
             ? args.runtimeContext.currentTokenCount

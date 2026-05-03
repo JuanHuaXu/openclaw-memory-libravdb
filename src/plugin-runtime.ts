@@ -31,7 +31,7 @@ export type RuntimeShutdownTask = () => Promise<void> | void;
 
 export interface PluginRuntime {
   getRpc: RpcGetter;
-  getKernel(): GrpcKernelClient | null;
+  getKernel(): Promise<GrpcKernelClient | null>;
   emitLifecycleHint(hint: LifecycleHint): Promise<void>;
   onShutdown(task: RuntimeShutdownTask): void;
   shutdown(): Promise<void>;
@@ -44,7 +44,6 @@ export function createPluginRuntime(
   let started: Promise<{ rpc: RpcClient; sidecar: SidecarHandle; kernel: GrpcKernelClient | null }> | null = null;
   let stopped = false;
   let shuttingDown = false;
-  let resolvedKernel: GrpcKernelClient | null = null;
   const shutdownTasks: RuntimeShutdownTask[] = [];
 
   const ensureStarted = async () => {
@@ -82,7 +81,6 @@ export function createPluginRuntime(
           }
         }
 
-        resolvedKernel = kernel;
         return { rpc, sidecar, kernel };
       })().catch((error) => {
         started = null;
@@ -96,9 +94,8 @@ export function createPluginRuntime(
     async getRpc() {
       return (await ensureStarted()).rpc;
     },
-    getKernel() {
-      if (!started) return null;
-      return resolvedKernel;
+    async getKernel() {
+      return (await ensureStarted()).kernel;
     },
     async emitLifecycleHint(hint: LifecycleHint) {
       try {
