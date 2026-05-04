@@ -140,6 +140,17 @@ export function register(api: OpenClawPluginApi) {
     },
   });
 
+  api.registerRuntimeLifecycle?.({
+    id: "libravdb-shutdown",
+    description: "Shut down the vector service runtime on plugin disable",
+    async cleanup(ctx) {
+      if (ctx.reason === "disable") {
+        logger.info?.("LibraVDB disable — shutting down runtime");
+        await runtime.shutdown();
+      }
+    },
+  });
+
   api.on("before_reset", createBeforeResetHook(runtime, api.logger ?? console));
   api.on("session_end", createSessionEndHook(runtime, api.logger ?? console));
   api.on("agent_end", async (event: unknown) => {
