@@ -415,9 +415,18 @@ async function runSearch(
     return;
   }
 
+  let maxResults: number | undefined;
+  let explicitMinScore: number | undefined;
   try {
-    const maxResults = normalizeCliLimit(opts?.maxResults ?? opts?.limit, "--max-results");
-    const explicitMinScore = normalizeCliScore(opts?.minScore, "--min-score");
+    maxResults = normalizeCliLimit(opts?.maxResults ?? opts?.limit, "--max-results");
+    explicitMinScore = normalizeCliScore(opts?.minScore, "--min-score");
+  } catch (validationError) {
+    logger.error(formatError(validationError));
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
     const bridge = buildMemoryRuntimeBridge(runtime.getRpc, cfg);
     const { manager } = await bridge.getMemorySearchManager({
       agentId: opts?.agent,
@@ -508,8 +517,16 @@ async function runExport(runtime: PluginRuntime, opts: CliOptionBag | undefined,
 }
 
 async function runJournal(runtime: PluginRuntime, opts: CliOptionBag | undefined, logger: LoggerLike): Promise<void> {
+  let limit: number | undefined;
   try {
-    const limit = normalizeCliLimit(opts?.limit, "--limit");
+    limit = normalizeCliLimit(opts?.limit, "--limit");
+  } catch (validationError) {
+    logger.error(formatError(validationError));
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
     const rpc = await runtime.getRpc();
     const result = await rpc.call<JournalResult>("list_lifecycle_journal", {
       sessionId: opts?.sessionId?.trim() || undefined,
