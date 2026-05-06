@@ -198,13 +198,14 @@ test("assemble fail-closed on sidecar errors with budget-clamped fallback", asyn
 
   const cfg: PluginConfig = { rpcTimeoutMs: 1000, compactThreshold: 100000 };
   const context = buildContextEngineFactory(async () => rpc as never, cfg);
+  const toolCalls = [{ id: "call-1", type: "function", function: { name: "memory", arguments: "{}" } }];
 
   const assembled = await context.assemble({
     sessionId: "test-session",
     userId: "test-user",
     messages: [
       { role: "user", content: "U".repeat(2200) },
-      { role: "assistant", content: "A".repeat(2200) },
+      { role: "assistant", content: "short fallback", tool_calls: toolCalls },
     ],
     tokenBudget: 512,
   });
@@ -212,6 +213,7 @@ test("assemble fail-closed on sidecar errors with budget-clamped fallback", asyn
   assert.ok(assembled.estimatedTokens <= 256);
   assert.ok(assembled.messages.length >= 1);
   assert.equal(assembled.systemPromptAddition, "");
+  assert.equal(assembled.messages.at(-1)?.tool_calls, toolCalls);
 });
 
 test("assemble triggers force compaction at dynamic 80% threshold before daemon assembly", async () => {
