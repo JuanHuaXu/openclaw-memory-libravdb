@@ -416,7 +416,7 @@ test("status --deep probes authored collection search health", async () => {
         shutdownCalls += 1;
       },
     },
-    {},
+    { userId: "default" },
   );
 
   assert.ok(registered);
@@ -447,7 +447,7 @@ test("status --deep probes authored collection search health", async () => {
   assert.equal(payload.deep.ok, false);
   assert.deepEqual(
     rpcCalls.filter((call) => call.method === "search_text").map((call) => call.params.collection),
-    ["authored:hard", "authored:soft", "authored:variant"],
+    ["authored:hard", "authored:soft", "authored:variant", "user:default", "global"],
   );
   assert.match(payload.deep.probes[1]?.error ?? "", /dimension 384/);
   assert.equal(observedExitCode, 1);
@@ -473,7 +473,13 @@ test("status --deep includes authored probe rows in table output", async () => {
               return { ok: true, message: "ok", embeddingProfile: "all-minilm-l6-v2" };
             }
             if (method === "search_text") {
-              return { results: params.collection === "authored:variant" ? [{ id: "v1" }] : [] };
+              if (params.collection === "authored:variant") {
+                return { results: [{ id: "v1" }] };
+              }
+              if (params.collection === "global") {
+                return { results: [{ id: "g1" }] };
+              }
+              return { results: [] };
             }
             throw new Error(`unexpected rpc method: ${method}`);
           },
@@ -484,7 +490,7 @@ test("status --deep includes authored probe rows in table output", async () => {
       onShutdown: async () => {},
       async shutdown() {},
     },
-    {},
+    { userId: "default" },
   );
 
   assert.ok(registered);
@@ -515,6 +521,8 @@ test("status --deep includes authored probe rows in table output", async () => {
   assert.equal(tables[0]?.["Probe authored:hard"], "ok (0 hits)");
   assert.equal(tables[0]?.["Probe authored:soft"], "ok (0 hits)");
   assert.equal(tables[0]?.["Probe authored:variant"], "ok (1 hits)");
+  assert.equal(tables[0]?.["Probe user:default"], "ok (0 hits)");
+  assert.equal(tables[0]?.["Probe global"], "ok (1 hits)");
 });
 
 test("non-full CLI registration exposes command structure without action handlers", () => {
