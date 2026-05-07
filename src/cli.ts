@@ -313,11 +313,13 @@ async function runDeepStatusProbe(
   rpc: { call<T>(method: string, params: unknown): Promise<T> },
   cfg: PluginConfig,
 ): Promise<DeepStatusResult> {
-  // Resolve user namespace the same way the runtime does, so we probe
-  // the same collections that searchResolvedCollections would query.
+  // Resolve userId without triggering auto-derive file writes.
+  // status --deep should be read-only; if no userId is configured and no
+  // identity file exists, fall back to "default" rather than creating one.
   const { userId } = resolveIdentity({
     configUserId: cfg.userId,
     identityPath: cfg.identityPath,
+    noAutoPersist: true,
   });
   const durableCollections = [`user:${userId}`, "global"] as const;
 
