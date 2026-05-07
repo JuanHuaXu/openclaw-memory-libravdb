@@ -164,6 +164,29 @@ function approximateMessagesTokens(messages: OpenClawCompatibleMessage[]): numbe
   return messages.reduce((sum, message) => sum + approximateMessageTokens(message), 0);
 }
 
+function selectAfterTurnMessages<T>(
+  messages: T[],
+  prePromptMessageCount: number | undefined,
+  logger?: LoggerLike,
+): T[] {
+  if (
+    typeof prePromptMessageCount !== "number" ||
+    !Number.isFinite(prePromptMessageCount) ||
+    prePromptMessageCount <= 0
+  ) {
+    return messages;
+  }
+  const start = Math.floor(prePromptMessageCount);
+  if (start >= messages.length) {
+    logger?.warn?.(
+      `LibraVDB afterTurn prePromptMessageCount produced zero forwarded messages ` +
+      `prePromptMessageCount=${prePromptMessageCount} start=${start} totalMessages=${messages.length}`,
+    );
+    return [];
+  }
+  return messages.slice(start);
+}
+
 function normalizeCurrentTokenCount(currentTokenCount: number | undefined): number | undefined {
   if (
     typeof currentTokenCount !== "number" ||
@@ -976,11 +999,14 @@ export function buildContextEngineFactory(
         userIdOverride: args.userId,
         sessionKey: args.sessionKey,
       });
-      const messages = normalizeKernelMessages(args.messages);
+      const afterTurnMessages = selectAfterTurnMessages(args.messages, args.prePromptMessageCount, logger);
+      const messages = normalizeKernelMessages(afterTurnMessages);
       const msgCount = messages.length;
       logger.info?.(
         `LibraVDB afterTurn sessionId=${args.sessionId} userId=${userId} ` +
-        `messageCount=${msgCount} heartbeat=${args.isHeartbeat ?? false}`,
+        `messageCount=${msgCount} totalMessages=${args.messages.length} ` +
+        `prePromptMessageCount=${args.prePromptMessageCount ?? "unknown"} ` +
+        `heartbeat=${args.isHeartbeat ?? false}`,
       );
       try {
         const kernel = await getKernelOrNull("afterTurn");
