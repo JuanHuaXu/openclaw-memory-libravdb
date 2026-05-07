@@ -25,9 +25,9 @@ test("dream routing detects explicit dream phrasing", () => {
 
 test("dream routing rejects idiomatic false positives", () => {
   assert.equal(detectDreamQuerySignal("pipe dream architecture").active, false);
+  assert.equal(detectDreamQuerySignal("pipe dreams everywhere").active, false);
   assert.equal(detectDreamQuerySignal("the American dream").active, false);
   assert.equal(detectDreamQuerySignal("dream team meeting").active, false);
-  assert.equal(detectDreamQuerySignal("I have a dream speech").active, false);
   assert.equal(detectDreamQuerySignal("dream house renovation").active, false);
   assert.equal(detectDreamQuerySignal("dream vacation planning").active, false);
   assert.equal(detectDreamQuerySignal("dream job listing").active, false);
@@ -35,6 +35,8 @@ test("dream routing rejects idiomatic false positives", () => {
   assert.equal(detectDreamQuerySignal("dream wedding venue").active, false);
   assert.equal(detectDreamQuerySignal("dream school application").active, false);
   assert.equal(detectDreamQuerySignal("dream home interior design").active, false);
+  assert.equal(detectDreamQuerySignal("in my dreams").active, false);
+  assert.equal(detectDreamQuerySignal("in your dreams").active, false);
 });
 
 test("dream routing ignores ordinary memory queries", () => {

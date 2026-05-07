@@ -10,7 +10,6 @@ const DREAM_PATTERN_RULES: Array<{ label: string; patterns: RegExp[] }> = [
       /\bwhat\s+was\s+i\s+dreaming\s+about\b/i,
       /\b(?:do\s+you\s+)?remember\s+(?:\w+\s+)?(?:the\s+)?dreams?\b/i,
       /\brecall\s+(?:\w+\s+)?(?:the\s+)?dreams?\b/i,
-      /\b(?:my|our|your)\s+dreams?\b/i,
       /\bhad\s+a\s+dream\b/i,
       /\bdreams?\s+(?:about|from|last|this|yesterday|recent)\b/i,
       /\bdream(?:ed|ing)\s+about\b/i,
@@ -22,10 +21,11 @@ const DREAM_PATTERN_RULES: Array<{ label: string; patterns: RegExp[] }> = [
 
 /** Phrases that contain "dream" but are idiomatic (not memory-recall intent). */
 const DREAM_FALSE_POSITIVE_PATTERNS: RegExp[] = [
-  /\bpipe\s+dream\b/i,
+  /\bpipe\s+dreams?\b/i,
   /\bdream\s+team\b/i,
   /\bamerican\s+dream\b/i,
   /\bdream\s+(?:house|home|car|wedding|vacation|job|school)\b/i,
+  /\bin\s+(?:my|our|your)\s+dreams\b/i,
 ];
 
 const DREAM_MATCHED_PATTERNS = ["dream"] as const;
