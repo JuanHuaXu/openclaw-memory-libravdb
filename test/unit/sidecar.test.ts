@@ -114,6 +114,15 @@ test("buildSidecarEnv maps embedding config into sidecar environment", () => {
   });
 });
 
+test("buildSidecarEnv defaults onnxDevice to cpu when not configured", () => {
+  const env = buildSidecarEnv({
+    rpcTimeoutMs: 1,
+    dbPath: "/tmp/libravdb",
+  });
+
+  assert.equal(env.LIBRAVDB_ONNX_DEVICE, "cpu");
+});
+
 test("daemonProvisioningHint explains the npm vs Homebrew split", () => {
   assert.match(daemonProvisioningHint(), /npm package/);
   assert.match(daemonProvisioningHint(), /install and start libravdbd separately/);
