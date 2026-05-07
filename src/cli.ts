@@ -3,6 +3,7 @@ import { stdin, stdout } from "node:process";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { MEMORY_CLI_DESCRIPTOR, isMemorySlotSelected } from "./cli-descriptors.js";
 import { resolveDurableNamespace } from "./memory-scopes.js";
+import { resolveIdentity } from "./identity.js";
 import { promoteDreamDiaryFile } from "./dream-promotion.js";
 import { buildMemoryRuntimeBridge } from "./memory-runtime.js";
 import type { PluginRuntime } from "./plugin-runtime.js";
@@ -251,7 +252,7 @@ async function runStatus(
   try {
     const rpc = await runtime.getRpc();
     const status = await rpc.call<StatusResult>("status", {});
-    const deep = opts.deep ? await runDeepStatusProbe(rpc) : undefined;
+    const deep = opts.deep ? await runDeepStatusProbe(rpc, cfg) : undefined;
     if (opts.json) {
       console.log(JSON.stringify({ status, ...(deep ? { deep } : {}) }, null, 2));
       if (deep && !deep.ok) {
@@ -306,11 +307,26 @@ async function runStatus(
   }
 }
 
-const DEEP_STATUS_COLLECTIONS = ["authored:hard", "authored:soft", "authored:variant"] as const;
+const AUTHORED_STATUS_COLLECTIONS = ["authored:hard", "authored:soft", "authored:variant"] as const;
 
-async function runDeepStatusProbe(rpc: { call<T>(method: string, params: unknown): Promise<T> }): Promise<DeepStatusResult> {
+async function runDeepStatusProbe(
+  rpc: { call<T>(method: string, params: unknown): Promise<T> },
+  cfg: PluginConfig,
+): Promise<DeepStatusResult> {
+  // Resolve userId without triggering auto-derive file writes.
+  // status --deep should be read-only; if no userId is configured and no
+  // identity file exists, fall back to "default" rather than creating one.
+  const { userId } = resolveIdentity({
+    configUserId: cfg.userId,
+    identityPath: cfg.identityPath,
+    noAutoPersist: true,
+  });
+  const durableCollections = [`user:${userId}`, "global"] as const;
+
+  const allCollections = [...AUTHORED_STATUS_COLLECTIONS, ...durableCollections] as const;
+
   const probes: DeepStatusProbe[] = [];
-  for (const collection of DEEP_STATUS_COLLECTIONS) {
+  for (const collection of allCollections) {
     try {
       const result = await rpc.call<{ results?: unknown[] }>("search_text", {
         collection,

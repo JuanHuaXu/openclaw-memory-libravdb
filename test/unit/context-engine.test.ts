@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildContextEngineFactory } from "../../src/context-engine.js";
+import fs from "node:fs";
 import { resolveIdentity } from "../../src/identity.js";
 import type { PluginConfig, SearchResult } from "../../src/types.js";
 import type { PluginRuntime } from "../../src/plugin-runtime.js";
@@ -742,4 +743,19 @@ test("resolveIdentity returns 'default' when no inputs are provided", () => {
   // When userInfo() works: auto-derived. An identity file or "default" may also apply.
   assert.ok(["auto", "default", "file"].includes(result.source));
   assert.ok(result.userId.length > 0);
+});
+
+test("resolveIdentity with noAutoPersist skips writing identity file", () => {
+  const tmpDir = `/tmp/libravdb-test-identity-${process.pid}`;
+  const identityPath = `${tmpDir}/libravdb-identity.json`;
+  try {
+    const result = resolveIdentity({ identityPath, noAutoPersist: true });
+    // Should still derive a userId
+    assert.ok(result.userId.length > 0);
+    assert.equal(result.source, "auto");
+    // But must not have written the file
+    assert.equal(fs.existsSync(identityPath), false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
