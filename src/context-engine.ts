@@ -22,8 +22,9 @@ type KernelCompatibleMessage = {
 
 type OpenClawCompatibleMessage = {
   role: string;
-  content: string;
+  content: string | unknown[];
   id?: string;
+  [key: string]: unknown;
 };
 
 type OpenClawCompatibleAssembleResult = {
@@ -144,9 +145,14 @@ function normalizeKernelContent(content: unknown): string {
   return content.map(stringifyKernelBlock).filter((part) => part.length > 0).join("\n");
 }
 
-function approximateTokenCount(text: string): number {
-  if (!text) return 0;
-  return Math.ceil(text.length / APPROX_CHARS_PER_TOKEN);
+function approximateTokenCount(text: unknown): number {
+  if (typeof text === "string") {
+    return Math.ceil(text.length / APPROX_CHARS_PER_TOKEN);
+  }
+  if (!Array.isArray(text)) {
+    return 0;
+  }
+  return Math.ceil(normalizeKernelContent(text).length / APPROX_CHARS_PER_TOKEN);
 }
 
 function approximateMessageTokens(message: OpenClawCompatibleMessage): number {
@@ -259,12 +265,13 @@ function logPredictiveCompactionOutcome(params: {
   params.logger.warn?.(message);
 }
 
-function truncateContentToTokenBudget(content: string, tokenBudget: number): string {
+function truncateContentToTokenBudget(content: unknown, tokenBudget: number): string {
   if (tokenBudget <= 0) return "";
   const maxChars = Math.max(1, tokenBudget * APPROX_CHARS_PER_TOKEN);
-  if (content.length <= maxChars) return content;
+  const normalized = normalizeKernelContent(content);
+  if (normalized.length <= maxChars) return normalized;
   // Keep the tail so recent tool output / latest answer content is preserved.
-  return content.slice(content.length - maxChars);
+  return normalized.slice(normalized.length - maxChars);
 }
 
 function trimMessagesToBudget(
@@ -578,7 +585,7 @@ export function buildContextEngineFactory(
 
     const existingBlocks = [
       assembled.systemPromptAddition,
-      ...assembled.messages.map((message) => message.content),
+      ...assembled.messages.map((message) => normalizeKernelContent(message.content)),
     ]
       .flatMap((block) => block.split(/\n+/))
       .map((block) => block.trim())
@@ -829,7 +836,7 @@ export function buildContextEngineFactory(
       sessionId: string;
       sessionKey?: string;
       userId?: string;
-      messages: Array<{ role: string; content: unknown; id?: string }>;
+      messages: OpenClawCompatibleMessage[];
       tokenBudget: number;
       prompt?: string;
       currentTokenCount?: number;
@@ -882,7 +889,7 @@ export function buildContextEngineFactory(
             `LibraVDB predictive compaction blocked assemble path at ${currentContextTokens} tokens ` +
             `(threshold=${dynamicCompactThreshold}): ${compactionResult.reason ?? "compaction failed"}`,
           );
-          return buildBudgetFallbackContext(messages, args.tokenBudget);
+          return buildBudgetFallbackContext(args.messages, args.tokenBudget);
         }
       }
       const kernel = await getKernelOrNull("assemble");
@@ -912,7 +919,7 @@ export function buildContextEngineFactory(
             `LibraVDB assemble kernel failed, using budget-clamped fallback context: ${error instanceof Error ? error.message : String(error)
             }`,
           );
-          return buildBudgetFallbackContext(messages, args.tokenBudget);
+          return buildBudgetFallbackContext(args.messages, args.tokenBudget);
         }
       }
 
@@ -943,7 +950,7 @@ export function buildContextEngineFactory(
           `LibraVDB assemble sidecar failed, using budget-clamped fallback context: ${error instanceof Error ? error.message : String(error)
           }`,
         );
-        return buildBudgetFallbackContext(messages, args.tokenBudget);
+        return buildBudgetFallbackContext(args.messages, args.tokenBudget);
       }
     },
     async compact(args: {
@@ -959,7 +966,7 @@ export function buildContextEngineFactory(
       sessionId: string;
       sessionKey?: string;
       userId?: string;
-      messages: Array<{ role: string; content: unknown; id?: string }>;
+      messages: OpenClawCompatibleMessage[];
       prePromptMessageCount?: number;
       isHeartbeat?: boolean;
       tokenBudget?: number;
