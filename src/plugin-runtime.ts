@@ -2,6 +2,7 @@ import { RpcClient } from "./rpc.js";
 import { GrpcKernelClient } from "./grpc-client.js";
 import { daemonProvisioningHint, startSidecar } from "./sidecar.js";
 import type { LoggerLike, PluginConfig, SidecarHandle } from "./types.js";
+import { formatError } from "./format-error.js";
 import { readFileSync } from "node:fs";
 
 export type RpcGetter = () => Promise<RpcClient>;
@@ -154,13 +155,6 @@ function loadSecretFromEnv(): string | undefined {
     }
   }
   return undefined;
-}
-
-function formatError(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-  return String(error);
 }
 
 export function enrichStartupError(error: unknown, healthMessage?: string): Error {

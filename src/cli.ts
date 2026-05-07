@@ -4,6 +4,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { MEMORY_CLI_DESCRIPTOR, isMemorySlotSelected } from "./cli-descriptors.js";
 import { resolveDurableNamespace } from "./memory-scopes.js";
 import { resolveIdentity } from "./identity.js";
+import { formatError } from "./format-error.js";
 import { promoteDreamDiaryFile } from "./dream-promotion.js";
 import { buildMemoryRuntimeBridge } from "./memory-runtime.js";
 import type { PluginRuntime } from "./plugin-runtime.js";
@@ -588,12 +589,6 @@ async function confirm(prompt: string): Promise<boolean> {
   }
 }
 
-function formatError(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-  return String(error);
-}
 
 function normalizeCliLimit(limit: string | number | undefined, optionName: string): number | undefined {
   if (limit === undefined) return undefined;

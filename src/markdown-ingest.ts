@@ -4,6 +4,7 @@ import path from "node:path";
 
 import type { LoggerLike, PluginConfig } from "./types.js";
 import { hashBytes } from "./markdown-hash.js";
+import { formatError } from "./format-error.js";
 
 const DEFAULT_DEBOUNCE_MS = 150;
 const DEFAULT_TOKENIZER_ID = "markdown-ingest:v1";
@@ -581,13 +582,6 @@ function matchesGlob(value: string, pattern: string): boolean {
     .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
     .join(".*");
   return new RegExp(`^${escaped}$`).test(value);
-}
-
-function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
 }
 
 function looksLikeObsidianNote(filePath: string, text: string): boolean {
