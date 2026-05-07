@@ -28,12 +28,11 @@ const DREAM_FALSE_POSITIVE_PATTERNS: RegExp[] = [
   /\bdream\s+(?:house|home|car|wedding|vacation|job|school)\b/i,
 ];
 
-const DREAM_MATCHED_PATTERNS: string[] = ["dream"];
-const EMPTY_MATCHED_PATTERNS: string[] = [];
+const DREAM_MATCHED_PATTERNS = ["dream"] as const;
 
 export interface DreamQuerySignal {
   active: boolean;
-  matchedPatterns: string[];
+  matchedPatterns: readonly string[];
 }
 
 export function detectDreamQuerySignal(queryText: string): DreamQuerySignal {
@@ -43,18 +42,18 @@ export function detectDreamQuerySignal(queryText: string): DreamQuerySignal {
       if (DREAM_FALSE_POSITIVE_PATTERNS.some((p) => p.test(queryText))) {
         return {
           active: false,
-          matchedPatterns: EMPTY_MATCHED_PATTERNS,
+          matchedPatterns: [],
         };
       }
       return {
         active: true,
-        matchedPatterns: DREAM_MATCHED_PATTERNS,
+        matchedPatterns: [...DREAM_MATCHED_PATTERNS],
       };
     }
   }
   return {
     active: false,
-    matchedPatterns: EMPTY_MATCHED_PATTERNS,
+    matchedPatterns: [],
   };
 }
 
