@@ -5,6 +5,7 @@ import path from "node:path";
 import type { LoggerLike, PluginConfig } from "./types.js";
 import { hashBytes } from "./markdown-hash.js";
 import { formatError } from "./format-error.js";
+import { IngestQueue } from "./ingest-queue.js";
 
 const DEFAULT_DEBOUNCE_MS = 150;
 const DEFAULT_TOKENIZER_ID = "markdown-ingest:v1";
@@ -198,6 +199,7 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
   private readonly tokenizerId: string;
   private readonly coreDoc: boolean;
   private started = false;
+  private ingestQueue: IngestQueue | null = null;
   private stopping = false;
 
   constructor(kind: string, config: GenericMarkdownSourceConfig, getRpc: RpcGetterLike, logger: LoggerLike, fsApi: FsApi) {
@@ -488,30 +490,38 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
     sourceSize: number,
     sourceMtimeMs: number,
   ): Promise<void> {
-    const rpc = await this.getRpc();
-    const params: IngestMarkdownDocumentParams = {
+    const queue = await this.getIngestQueue();
+    await queue.enqueueIngest(
       sourceDoc,
       text,
-      tokenizerId: this.tokenizerId,
-      coreDoc: this.coreDoc,
-      sourceMeta: {
-        sourceRoot,
-        sourcePath,
-        sourceKind: this.kind,
-        fileHash,
-        sourceSize,
-        sourceMtimeMs: Math.trunc(sourceMtimeMs),
-        ingestVersion: MARKDOWN_INGEST_VERSION,
-        hashBackend: HASH_BACKEND,
+      {
+        tokenizerId: this.tokenizerId,
+        coreDoc: this.coreDoc,
+        sourceMeta: {
+          sourceRoot,
+          sourcePath,
+          sourceKind: this.kind,
+          fileHash,
+          sourceSize,
+          sourceMtimeMs: Math.trunc(sourceMtimeMs),
+          ingestVersion: MARKDOWN_INGEST_VERSION,
+          hashBackend: HASH_BACKEND,
+        },
       },
-    };
-    await rpc.call("ingest_markdown_document", params);
+    );
   }
 
   private async deleteSourceDocument(sourceDoc: string): Promise<void> {
-    const rpc = await this.getRpc();
-    const params: DeleteAuthoredDocumentParams = { sourceDoc };
-    await rpc.call("delete_authored_document", params);
+    const queue = await this.getIngestQueue();
+    await queue.enqueueDelete(sourceDoc);
+  }
+
+  private async getIngestQueue(): Promise<IngestQueue> {
+    if (!this.ingestQueue) {
+      const rpc = await this.getRpc();
+      this.ingestQueue = new IngestQueue(rpc.call.bind(rpc), this.logger);
+    }
+    return this.ingestQueue;
   }
 
   private async safeStat(filePath: string): Promise<{ size: number; mtimeMs: number } | null> {

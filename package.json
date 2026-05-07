@@ -1,6 +1,6 @@
 {
   "name": "@xdarkicex/openclaw-memory-libravdb",
-  "version": "1.4.46",
+  "version": "1.4.47",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -73,7 +73,7 @@
     "@grpc/proto-loader": "^0.8.0",
     "@openclaw/plugin-inspector": "0.3.7",
     "@types/node": "^20.11.0",
-    "@xdarkicex/libravdb-contracts": "^0.0.1",
+    "@xdarkicex/libravdb-contracts": "^0.0.6",
     "esbuild": "^0.27.0",
     "typescript": "^6.0.3"
   },
