@@ -42,6 +42,7 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
 
   interface PluginsSlots {
     memory?: string;
+    contextEngine?: string;
   }
 
   interface PluginsConfig {

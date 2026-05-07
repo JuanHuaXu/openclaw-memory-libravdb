@@ -415,13 +415,22 @@ async function runSearch(
     return;
   }
 
+  let maxResults: number | undefined;
+  let explicitMinScore: number | undefined;
+  try {
+    maxResults = normalizeCliLimit(opts?.maxResults ?? opts?.limit, "--max-results");
+    explicitMinScore = normalizeCliScore(opts?.minScore, "--min-score");
+  } catch (validationError) {
+    logger.error(formatError(validationError));
+    process.exitCode = 1;
+    return;
+  }
+
   try {
     const bridge = buildMemoryRuntimeBridge(runtime.getRpc, cfg);
     const { manager } = await bridge.getMemorySearchManager({
       agentId: opts?.agent,
     });
-    const maxResults = normalizeLimit(opts?.maxResults ?? opts?.limit);
-    const explicitMinScore = normalizeNumber(opts?.minScore);
     const minScore = explicitMinScore ?? resolveDefaultSearchMinScore(manager.status(), cfg);
     const results = (await manager.search(
       {
@@ -486,10 +495,17 @@ async function runFlush(runtime: PluginRuntime, opts: CliOptionBag | undefined, 
 }
 
 async function runExport(runtime: PluginRuntime, opts: CliOptionBag | undefined, logger: LoggerLike): Promise<void> {
+  const namespace = resolveCliNamespace(opts);
+  if (!namespace) {
+    logger.error("LibraVDB export requires a namespace. Provide --user-id or --session-key.");
+    process.exitCode = 1;
+    return;
+  }
+
   try {
     const rpc = await runtime.getRpc();
     const result = await rpc.call<ExportResult>("export_memory", {
-      namespace: resolveCliNamespace(opts),
+      namespace,
     });
     for (const record of result.records ?? []) {
       stdout.write(`${JSON.stringify(record)}\n`);
@@ -501,11 +517,20 @@ async function runExport(runtime: PluginRuntime, opts: CliOptionBag | undefined,
 }
 
 async function runJournal(runtime: PluginRuntime, opts: CliOptionBag | undefined, logger: LoggerLike): Promise<void> {
+  let limit: number | undefined;
+  try {
+    limit = normalizeCliLimit(opts?.limit, "--limit");
+  } catch (validationError) {
+    logger.error(formatError(validationError));
+    process.exitCode = 1;
+    return;
+  }
+
   try {
     const rpc = await runtime.getRpc();
     const result = await rpc.call<JournalResult>("list_lifecycle_journal", {
       sessionId: opts?.sessionId?.trim() || undefined,
-      limit: normalizeLimit(opts?.limit),
+      limit,
     });
     for (const record of result.results ?? []) {
       stdout.write(`${JSON.stringify(record)}\n`);
@@ -554,17 +579,30 @@ function formatError(error: unknown): string {
   return String(error);
 }
 
-function normalizeLimit(limit: string | number | undefined): number | undefined {
-  if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
-    return Math.floor(limit);
+function normalizeCliLimit(limit: string | number | undefined, optionName: string): number | undefined {
+  if (limit === undefined) return undefined;
+  const parsed = parseStrictNumber(limit);
+  if (Number.isFinite(parsed) && Number.isInteger(parsed) && parsed > 0) {
+    return parsed;
   }
-  if (typeof limit === "string") {
-    const parsed = Number.parseInt(limit, 10);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
-    }
+  throw new Error(`Invalid value for ${optionName}: must be a positive integer`);
+}
+
+function normalizeCliScore(value: string | number | undefined, optionName: string): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = parseStrictNumber(value);
+  if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) {
+    return parsed;
   }
-  return undefined;
+  throw new Error(`Invalid value for ${optionName}: must be a number between 0 and 1`);
+}
+
+function parseStrictNumber(value: string | number): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? NaN : Number(trimmed);
 }
 
 function normalizeNumber(value: string | number | undefined): number | undefined {
