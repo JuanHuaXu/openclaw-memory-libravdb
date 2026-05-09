@@ -494,6 +494,41 @@ test("context engine assemble keeps daemon result when exact recall RPC acquisit
   assert.match(warnings[0] ?? "", /exact recall skipped/);
 });
 
+test("context engine exact recall skips empty-text search results", async () => {
+  const rpc = new FakeRpc();
+  const marker = "BROKEN_SESSION_MEMORY_MARKER_1234567890";
+  rpc.assembleResponse = {
+    messages: [{ role: "user", content: `What does ${marker} mean?` }],
+    estimatedTokens: 24,
+    systemPromptAddition: "",
+  };
+  rpc.searchResults = [
+    {
+      id: "empty-fact",
+      score: 0,
+      text: "",
+      metadata: { collection: "user:fixed-user" },
+    },
+  ];
+  const warnings: string[] = [];
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), { userId: "fixed-user" }, {
+    error() {},
+    info() {},
+    warn(message: string) { warnings.push(message); },
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does ${marker} mean?`)],
+    prompt: `What does ${marker} mean?`,
+    tokenBudget: 4000,
+  });
+
+  assert.equal(assembled.systemPromptAddition, "");
+  assert.equal(warnings.some((message) => /exact recall failed/.test(message)), false);
+});
+
 test("exact recall extracts quoted phrases from user queries", async () => {
   const rpc = new FakeRpc();
   const phrase = "blue lobster preference";
