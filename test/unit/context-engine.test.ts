@@ -794,3 +794,42 @@ test("resolveIdentity with noAutoPersist skips writing identity file", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test("context engine exact recall escapes control characters inside injected memory facts", async () => {
+  const rpc = new FakeRpc();
+  const marker = "CONTROL_CHAR_MEMORY_MARKER_1234567890";
+  rpc.searchResults = [
+    {
+      id: "fact",
+      score: 0.9,
+      text: `${marker} means line1\nline2\rline3\ttab & <tag> "quoted" 'single'.`,
+      metadata: { collection: "user:fixed-user", role: "user" },
+    },
+  ];
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), { userId: "fixed-user", topK: 4 });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does ${marker} mean?`)],
+    prompt: `What does ${marker} mean?`,
+    tokenBudget: 4000,
+  });
+
+  const match = assembled.systemPromptAddition.match(
+    /<memory_fact source="exact_recalled">([\s\S]*?)<\/memory_fact>/,
+  );
+  assert.ok(match, "exact recall fact should be injected through the context engine");
+  const factText = match[1]!;
+
+  assert.equal(factText.includes("\n"), false, "memory fact text should not contain raw newline");
+  assert.equal(factText.includes("\r"), false, "memory fact text should not contain raw carriage return");
+  assert.equal(factText.includes("\t"), false, "memory fact text should not contain raw tab");
+  assert.ok(factText.includes("&#10;"), "newline should be escaped to XML char reference");
+  assert.ok(factText.includes("&#13;"), "carriage return should be escaped to XML char reference");
+  assert.ok(factText.includes("&#9;"), "tab should be escaped to XML char reference");
+  assert.ok(factText.includes("&amp;"), "ampersand should still be escaped");
+  assert.ok(factText.includes("&lt;tag&gt;"), "angle brackets should still be escaped");
+  assert.ok(factText.includes("&quot;quoted&quot;"), "double quotes should still be escaped");
+  assert.ok(factText.includes("&#39;single&#39;"), "single quotes should still be escaped");
+});
