@@ -12,11 +12,13 @@ type ErrorHandler = (error: Error) => void;
 const STARTUP_CONNECT_MAX_RETRIES = 5;
 const STARTUP_CONNECT_BASE_DELAY_MS = 100;
 const STARTUP_CONNECT_MAX_TOTAL_WAIT_MS = 2000;
+const CONNECTION_STABILITY_WINDOW_MS = 15_000;
 
 export interface SidecarRuntime {
   resolveEndpoint(cfg: PluginConfig): string | Promise<string>;
   createSocket(endpoint: string): SidecarSocket;
   scheduleRestart(delayMs: number, restart: () => void): void;
+  stabilityWindowMs?: number;
 }
 
 class PlaceholderSocket implements SidecarSocket {
@@ -232,6 +234,7 @@ class SidecarSupervisor implements SidecarHandle {
   private degraded = false;
   private shuttingDown = false;
   private reconnectScheduled = false;
+  private stabilityTimer: ReturnType<typeof setTimeout> | null = null;
   public socket: SidecarSocket;
 
   constructor(
@@ -245,8 +248,8 @@ class SidecarSupervisor implements SidecarHandle {
   async start(): Promise<SidecarSocket> {
     const endpoint = await this.runtime.resolveEndpoint(this.cfg);
     const socket = await this.connectEndpointWithRetry(endpoint);
-    this.retries = 0;
     this.reconnectScheduled = false;
+    this.scheduleStabilityReset();
     if (this.socket instanceof SupervisorSocket) {
       this.socket.bind(socket);
     } else {
@@ -261,7 +264,30 @@ class SidecarSupervisor implements SidecarHandle {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.clearStabilityTimer();
     this.socket.destroy();
+  }
+
+  private scheduleStabilityReset(): void {
+    this.clearStabilityTimer();
+    const windowMs = this.runtime.stabilityWindowMs ?? CONNECTION_STABILITY_WINDOW_MS;
+    if (windowMs <= 0) {
+      this.retries = 0;
+      return;
+    }
+    this.stabilityTimer = setTimeout(() => {
+      this.stabilityTimer = null;
+      this.retries = 0;
+      this.logger.info?.("[libravdb] sidecar connection stable; retry counter reset");
+    }, windowMs);
+    this.stabilityTimer.unref?.();
+  }
+
+  private clearStabilityTimer(): void {
+    if (this.stabilityTimer) {
+      clearTimeout(this.stabilityTimer);
+      this.stabilityTimer = null;
+    }
   }
 
   private async connectEndpointWithRetry(endpoint: string): Promise<SidecarSocket> {
@@ -319,6 +345,8 @@ class SidecarSupervisor implements SidecarHandle {
     if (this.reconnectScheduled) {
       return;
     }
+
+    this.clearStabilityTimer();
 
     const maxRetries = this.cfg.maxRetries ?? 3;
     if (this.retries >= maxRetries) {
