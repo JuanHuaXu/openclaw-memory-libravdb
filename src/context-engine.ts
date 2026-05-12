@@ -297,6 +297,14 @@ function truncateContentToTokenBudget(content: unknown, tokenBudget: number): st
   return normalized.slice(normalized.length - maxChars);
 }
 
+function truncateSystemPromptAdditionToTokenBudget(value: string, tokenBudget: number): string {
+  if (tokenBudget <= 0) return "";
+  const maxChars = Math.max(1, tokenBudget * APPROX_CHARS_PER_TOKEN);
+  if (value.length <= maxChars) return value;
+  // System additions are head-structured: preserve XML/preamble/instructions.
+  return value.slice(0, maxChars);
+}
+
 function trimMessagesToBudget(
   messages: OpenClawCompatibleMessage[],
   tokenBudget: number,
@@ -322,7 +330,10 @@ function trimMessagesToBudget(
   }
 
   const last = messages[messages.length - 1]!;
-  const contentBudget = Math.max(1, tokenBudget - 8);
+  const contentBudget = tokenBudget - 8;
+  if (contentBudget <= 0) {
+    return [];
+  }
   const truncated = truncateContentToTokenBudget(last.content, contentBudget);
   if (!truncated) {
     return [];
@@ -341,18 +352,35 @@ function enforceTokenBudgetInvariant(
   const hardBudget = Math.max(1, Math.floor(tokenBudget));
   const effectiveBudget = resolveEffectiveAssembleBudget(hardBudget);
   const estimated = typeof result.estimatedTokens === "number" ? result.estimatedTokens : 0;
+  const systemPromptTokens = approximateTokenCount(result.systemPromptAddition);
   const approxFromMessages = approximateMessagesTokens(result.messages);
+  const approxTotal = systemPromptTokens + approxFromMessages;
 
-  if (estimated <= effectiveBudget && approxFromMessages <= effectiveBudget) {
+  if (estimated <= effectiveBudget && approxTotal <= effectiveBudget) {
     return result;
   }
 
-  const trimmedMessages = trimMessagesToBudget(result.messages, effectiveBudget);
+  if (systemPromptTokens >= effectiveBudget) {
+    const trimmedSystemPromptAddition = truncateSystemPromptAdditionToTokenBudget(
+      result.systemPromptAddition,
+      effectiveBudget,
+    );
+    const trimmedSystemPromptTokens = approximateTokenCount(trimmedSystemPromptAddition);
+    return {
+      ...result,
+      systemPromptAddition: trimmedSystemPromptAddition,
+      messages: [],
+      estimatedTokens: Math.min(effectiveBudget, trimmedSystemPromptTokens),
+    };
+  }
+
+  const messageBudget = Math.max(0, effectiveBudget - systemPromptTokens);
+  const trimmedMessages = trimMessagesToBudget(result.messages, messageBudget);
   const trimmedEstimate = approximateMessagesTokens(trimmedMessages);
   return {
     ...result,
     messages: trimmedMessages,
-    estimatedTokens: Math.min(effectiveBudget, trimmedEstimate),
+    estimatedTokens: Math.min(effectiveBudget, systemPromptTokens + trimmedEstimate),
   };
 }
 
