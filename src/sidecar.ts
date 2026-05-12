@@ -369,6 +369,31 @@ export function isTcpEndpoint(endpoint: string): boolean {
   return endpoint.startsWith("tcp:");
 }
 
+export function parseTcpEndpoint(endpoint: string): { host: string; port: number } | null {
+  if (!isTcpEndpoint(endpoint)) {
+    return null;
+  }
+  const address = endpoint.slice("tcp:".length).trim();
+  const separator = address.lastIndexOf(":");
+  if (separator <= 0 || separator === address.length - 1) {
+    return null;
+  }
+
+  let host = address.slice(0, separator).trim();
+  const port = Number(address.slice(separator + 1).trim());
+  if (host.startsWith("[") || host.endsWith("]")) {
+    if (!host.startsWith("[") || !host.endsWith("]")) {
+      return null;
+    }
+    host = host.slice(1, -1).trim();
+  }
+
+  if (host.length === 0 || !Number.isInteger(port) || port <= 0 || port > 65535) {
+    return null;
+  }
+  return { host, port };
+}
+
 export function resolveEndpoint(cfg: PluginConfig): string {
   const endpoint = resolveConfiguredEndpoint(cfg);
   return endpoint.replace(/^unix:/, "");
@@ -506,15 +531,11 @@ function createDefaultRuntime(): SidecarRuntime {
     },
     createSocket(endpoint) {
       if (isTcpEndpoint(endpoint)) {
-        const address = endpoint.slice("tcp:".length);
-        const separator = address.lastIndexOf(":");
-        if (separator <= 0) {
+        const parsed = parseTcpEndpoint(endpoint);
+        if (!parsed) {
           throw new Error(`Invalid TCP sidecar endpoint: ${endpoint}`);
         }
-        return net.connect({
-          host: address.slice(0, separator),
-          port: Number(address.slice(separator + 1)),
-        }) as unknown as SidecarSocket;
+        return net.connect(parsed) as unknown as SidecarSocket;
       }
       return net.connect(endpoint) as unknown as SidecarSocket;
     },
@@ -561,17 +582,7 @@ function isConfiguredEndpoint(value?: string): boolean {
   if (value.startsWith("unix:")) {
     return value.slice("unix:".length).trim().length > 0;
   }
-  if (!value.startsWith("tcp:")) {
-    return false;
-  }
-  const address = value.slice("tcp:".length);
-  const separator = address.lastIndexOf(":");
-  if (separator <= 0 || separator === address.length - 1) {
-    return false;
-  }
-  const host = address.slice(0, separator).trim();
-  const port = Number(address.slice(separator + 1));
-  return host.length > 0 && Number.isInteger(port) && port > 0 && port <= 65535;
+  return parseTcpEndpoint(value) !== null;
 }
 
 export { PlaceholderSocket };
@@ -585,15 +596,12 @@ export async function probeSidecarEndpoint(cfg: PluginConfig): Promise<string | 
   try {
     await new Promise<void>((resolve, reject) => {
       if (isTcpEndpoint(endpoint)) {
-        const address = endpoint.slice("tcp:".length);
-        const separator = address.lastIndexOf(":");
-        if (separator <= 0) {
+        const parsed = parseTcpEndpoint(endpoint);
+        if (!parsed) {
           reject(new Error("invalid tcp endpoint"));
           return;
         }
-        const host = address.slice(0, separator);
-        const port = Number(address.slice(separator + 1));
-        const socket = net.connect({ host, port }, () => {
+        const socket = net.connect(parsed, () => {
           socket.destroy();
           resolve();
         });
