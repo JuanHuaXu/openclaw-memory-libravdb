@@ -5,6 +5,7 @@ import { registerMemoryCli } from "../../src/cli.js";
 import { registerMemoryCliMetadata } from "../../src/cli-descriptors.js";
 import { register } from "../../src/index.js";
 import type { PluginRuntime } from "../../src/plugin-runtime.js";
+import type { PluginConfig } from "../../src/types.js";
 
 type RegisteredCli = {
   builder: (ctx: { program: FakeCommand }) => void;
@@ -87,6 +88,27 @@ function createRuntime(): PluginRuntime {
   };
 }
 
+function buildMemoryCommand(runtime: PluginRuntime, cfg: PluginConfig = {}): FakeCommand {
+  let registered: RegisteredCli | null = null;
+  const api = {
+    config: selectedConfig,
+    registerCli(builder: unknown, opts: RegisteredCli["opts"]) {
+      registered = { builder: builder as RegisteredCli["builder"], opts };
+    },
+  };
+
+  registerMemoryCli(api as never, runtime, cfg);
+
+  assert.ok(registered);
+  const cli = registered as RegisteredCli;
+  const program = new FakeCommand("openclaw");
+  cli.builder({ program });
+
+  const memory = program.commands.find((command) => command.name() === "memory");
+  assert.ok(memory);
+  return memory;
+}
+
 test("CLI metadata registers the memory descriptor only when LibraVDB owns the memory slot", () => {
   const registered: RegisteredCli[] = [];
   const api = {
@@ -162,6 +184,77 @@ test("full CLI registration exposes standard memory commands and LibraVDB operat
   assert.ok(dreamPromote);
   assert.ok(dreamPromote.requiredOptions.includes("--user-id <userId>"));
   assert.ok(dreamPromote.requiredOptions.includes("--dream-file <path>"));
+});
+
+test("flush command sends explicit user ids through the userId RPC field", async () => {
+  const rpcCalls: Array<{ method: string; params: unknown }> = [];
+  const memory = buildMemoryCommand({
+    async getRpc() {
+      return {
+        async call(method: string, params: unknown) {
+          rpcCalls.push({ method, params });
+          return {};
+        },
+      } as never;
+    },
+    getKernel: async () => null,
+    async emitLifecycleHint() {},
+    onShutdown() {},
+    async shutdown() {},
+  });
+
+  const flush = memory.commands.find((command) => command.name() === "flush");
+  assert.ok(flush?.handler);
+
+  const originalLog = console.log;
+  console.log = (() => undefined) as typeof console.log;
+  try {
+    await flush.handler?.({ userId: "  alice  ", yes: true });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(rpcCalls, [
+    {
+      method: "flush_namespace",
+      params: { userId: "alice" },
+    },
+  ]);
+});
+
+test("export command keeps user ids separate from derived namespaces", async () => {
+  const rpcCalls: Array<{ method: string; params: unknown }> = [];
+  const memory = buildMemoryCommand({
+    async getRpc() {
+      return {
+        async call(method: string, params: unknown) {
+          rpcCalls.push({ method, params });
+          return { records: [] };
+        },
+      } as never;
+    },
+    getKernel: async () => null,
+    async emitLifecycleHint() {},
+    onShutdown() {},
+    async shutdown() {},
+  });
+
+  const exportCmd = memory.commands.find((command) => command.name() === "export");
+  assert.ok(exportCmd?.handler);
+
+  await exportCmd.handler?.({ userId: "  alice  " });
+  await exportCmd.handler?.({ sessionKey: "  session-1  " });
+
+  assert.deepEqual(rpcCalls, [
+    {
+      method: "export_memory",
+      params: { userId: "alice" },
+    },
+    {
+      method: "export_memory",
+      params: { namespace: "session-key:session-1" },
+    },
+  ]);
 });
 
 test("status command shuts the plugin runtime down after printing status", async () => {

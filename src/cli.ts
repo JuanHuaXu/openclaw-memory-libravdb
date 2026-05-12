@@ -80,6 +80,13 @@ type CliCommand = {
 };
 
 type CliProgram = CliCommand;
+type CliMemoryOperationScope = {
+  displayName: string;
+  params: {
+    userId?: string;
+    namespace?: string;
+  };
+};
 
 export function registerMemoryCli(
   api: OpenClawPluginApi,
@@ -486,15 +493,15 @@ function resolveDefaultSearchMinScore(status: { gatingThreshold?: number } | und
 }
 
 async function runFlush(runtime: PluginRuntime, opts: CliOptionBag | undefined, logger: LoggerLike): Promise<void> {
-  const namespace = resolveCliNamespace(opts);
-  if (!namespace) {
+  const scope = resolveCliMemoryOperationScope(opts);
+  if (!scope) {
     logger.error("LibraVDB flush requires --user-id <userId> or --session-key <sessionKey>.");
     process.exitCode = 1;
     return;
   }
 
   if (!opts?.yes) {
-    const confirmed = await confirm(`Delete durable memory namespace ${namespace}? [y/N] `);
+    const confirmed = await confirm(`Delete durable memory namespace ${scope.displayName}? [y/N] `);
     if (!confirmed) {
       console.log("Aborted.");
       return;
@@ -503,8 +510,8 @@ async function runFlush(runtime: PluginRuntime, opts: CliOptionBag | undefined, 
 
   try {
     const rpc = await runtime.getRpc();
-    await rpc.call("flush_namespace", { namespace });
-    console.log(`Deleted durable memory namespace ${namespace}.`);
+    await rpc.call("flush_namespace", scope.params);
+    console.log(`Deleted durable memory namespace ${scope.displayName}.`);
   } catch (error) {
     logger.error(`LibraVDB flush failed: ${formatError(error)}`);
     process.exitCode = 1;
@@ -512,8 +519,8 @@ async function runFlush(runtime: PluginRuntime, opts: CliOptionBag | undefined, 
 }
 
 async function runExport(runtime: PluginRuntime, opts: CliOptionBag | undefined, logger: LoggerLike): Promise<void> {
-  const namespace = resolveCliNamespace(opts);
-  if (!namespace) {
+  const scope = resolveCliMemoryOperationScope(opts);
+  if (!scope) {
     logger.error("LibraVDB export requires a namespace. Provide --user-id or --session-key.");
     process.exitCode = 1;
     return;
@@ -521,9 +528,7 @@ async function runExport(runtime: PluginRuntime, opts: CliOptionBag | undefined,
 
   try {
     const rpc = await runtime.getRpc();
-    const result = await rpc.call<ExportResult>("export_memory", {
-      namespace,
-    });
+    const result = await rpc.call<ExportResult>("export_memory", scope.params);
     for (const record of result.records ?? []) {
       stdout.write(`${JSON.stringify(record)}\n`);
     }
@@ -652,6 +657,27 @@ function resolveCliNamespace(opts: CliOptionBag | undefined): string | undefined
     return undefined;
   }
   return resolveDurableNamespace({ userId, sessionKey, agentId });
+}
+
+function resolveCliMemoryOperationScope(opts: CliOptionBag | undefined): CliMemoryOperationScope | undefined {
+  const userId = opts?.userId?.trim();
+  if (userId) {
+    return {
+      displayName: `user:${userId}`,
+      params: { userId },
+    };
+  }
+
+  const sessionKey = opts?.sessionKey?.trim();
+  const agentId = opts?.agent?.trim();
+  if (!sessionKey && !agentId) {
+    return undefined;
+  }
+  const namespace = resolveDurableNamespace({ sessionKey, agentId });
+  return {
+    displayName: namespace,
+    params: { namespace },
+  };
 }
 
 type CliRegistrar = {
