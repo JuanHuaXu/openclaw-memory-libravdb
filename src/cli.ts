@@ -2,7 +2,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { MEMORY_CLI_DESCRIPTOR, isMemorySlotSelected } from "./cli-descriptors.js";
-import { resolveDurableNamespace } from "./memory-scopes.js";
+import { resolveDurableNamespace, resolveUserCollection } from "./memory-scopes.js";
 import { resolveIdentity } from "./identity.js";
 import { formatError } from "./format-error.js";
 import { promoteDreamDiaryFile } from "./dream-promotion.js";
@@ -324,11 +324,21 @@ async function runDeepStatusProbe(
     identityPath: cfg.identityPath,
     noAutoPersist: true,
   });
-  const durableCollections = [`user:${userId}`, "global"] as const;
-
-  const allCollections = [...AUTHORED_STATUS_COLLECTIONS, ...durableCollections] as const;
-
   const probes: DeepStatusProbe[] = [];
+  let userCollection: string | null = null;
+  try {
+    userCollection = resolveUserCollection(userId);
+  } catch (error) {
+    probes.push({
+      ok: false,
+      collection: "user:<invalid>",
+      error: formatError(error),
+    });
+  }
+
+  const durableCollections = userCollection ? [userCollection, "global"] : ["global"];
+  const allCollections = [...AUTHORED_STATUS_COLLECTIONS, ...durableCollections];
+
   for (const collection of allCollections) {
     try {
       const result = await rpc.call<{ results?: unknown[] }>("search_text", {

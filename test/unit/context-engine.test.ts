@@ -579,6 +579,38 @@ test("context engine assemble keeps daemon result when exact recall RPC acquisit
   assert.match(warnings[0] ?? "", /exact recall skipped/);
 });
 
+test("context engine exact recall rejects invalid user collections before probing", async () => {
+  const rpc = new FakeRpc();
+  const marker = "INVALID_USER_COLLECTION_MARKER_1234567890";
+  rpc.assembleResponse = {
+    messages: [{ role: "assistant", content: "base recalled context" }],
+    estimatedTokens: 24,
+    systemPromptAddition: "",
+  };
+  const warnings: string[] = [];
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), { userId: "bad user" }, {
+    error() {},
+    info() {},
+    warn(message: string) { warnings.push(message); },
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", `What does ${marker} mean?`)],
+    prompt: `What does ${marker} mean?`,
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [{ role: "assistant", content: "base recalled context" }]);
+  assert.equal(
+    rpc.calls.some((call) => call.method === "search_text_collections"),
+    false,
+    "invalid user collection should not be sent to the daemon",
+  );
+  assert.match(warnings[0] ?? "", /Invalid collection namespace/);
+});
+
 test("context engine exact recall skips empty-text search results", async () => {
   const rpc = new FakeRpc();
   const marker = "BROKEN_SESSION_MEMORY_MARKER_1234567890";

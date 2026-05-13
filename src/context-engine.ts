@@ -13,6 +13,7 @@ import {
   CompactSessionResponse,
 } from "@xdarkicex/libravdb-contracts";
 import { resolveIdentity, type ResolvedIdentity } from "./identity.js";
+import { resolveUserCollection } from "./memory-scopes.js";
 
 type KernelCompatibleMessage = {
   role: string;
@@ -693,7 +694,7 @@ export function buildContextEngineFactory(
     for (const token of missingTokens) {
       try {
         const result = await rpc.call<{ results: SearchResult[] }>("search_text_collections", {
-          collections: [`user:${args.userId}`, "global"],
+          collections: [resolveUserCollection(args.userId), "global"],
           text: token,
           k: Math.max(EXACT_RECALL_SEARCH_K, cfg.topK ?? 0),
           excludeByCollection: {},

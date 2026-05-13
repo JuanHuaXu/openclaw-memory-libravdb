@@ -454,6 +454,75 @@ test("status --deep probes authored collection search health", async () => {
   assert.equal(shutdownCalls, 1);
 });
 
+test("status --deep reports invalid user collection without probing it", async () => {
+  let registered: RegisteredCli | null = null;
+  const rpcCalls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const api = {
+    config: selectedConfig,
+    registerCli(builder: unknown, opts: RegisteredCli["opts"]) {
+      registered = { builder: builder as RegisteredCli["builder"], opts };
+    },
+  };
+
+  registerMemoryCli(
+    api as never,
+    {
+      async getRpc() {
+        return {
+          async call(method: string, params: Record<string, unknown>) {
+            rpcCalls.push({ method, params });
+            if (method === "status") {
+              return { ok: true, message: "ok", embeddingProfile: "all-minilm-l6-v2" };
+            }
+            if (method === "search_text") {
+              return { results: [] };
+            }
+            throw new Error(`unexpected rpc method: ${method}`);
+          },
+        } as never;
+      },
+      getKernel: async () => null,
+      async emitLifecycleHint() {},
+      onShutdown: async () => {},
+      async shutdown() {},
+    },
+    { userId: "bad user" },
+  );
+
+  assert.ok(registered);
+  const cli = registered as RegisteredCli;
+  const program = new FakeCommand("openclaw");
+  cli.builder({ program });
+
+  const memory = program.commands.find((command) => command.name() === "memory");
+  const status = memory?.commands.find((command) => command.name() === "status");
+  assert.ok(status?.handler);
+
+  const originalLog = console.log;
+  const previousExitCode = process.exitCode;
+  const logs: string[] = [];
+  let observedExitCode: string | number | undefined;
+  console.log = ((message?: unknown) => { logs.push(String(message)); }) as typeof console.log;
+  process.exitCode = undefined;
+  try {
+    await status.handler?.({ deep: true, json: true });
+    observedExitCode = process.exitCode;
+  } finally {
+    console.log = originalLog;
+    process.exitCode = previousExitCode;
+  }
+
+  const payload = JSON.parse(logs[0] ?? "{}");
+  assert.equal(payload.deep.ok, false);
+  assert.equal(payload.deep.probes[0]?.collection, "user:<invalid>");
+  assert.match(payload.deep.probes[0]?.error ?? "", /Invalid collection namespace/);
+  assert.deepEqual(
+    rpcCalls.filter((call) => call.method === "search_text").map((call) => call.params.collection),
+    ["authored:hard", "authored:soft", "authored:variant", "global"],
+  );
+  assert.equal(observedExitCode, 1);
+});
+
 test("status --deep includes authored probe rows in table output", async () => {
   let registered: RegisteredCli | null = null;
   const api = {
