@@ -76,6 +76,12 @@ test("defaultEndpoint uses unix sockets on unix and localhost TCP on windows", (
   }
 });
 
+test("defaultEndpoint builds unix fallback paths with POSIX separators", () => {
+  const endpoint = defaultEndpoint("darwin", "/Users/demo", () => false);
+
+  assert.equal(endpoint, "unix:/Users/demo/.libravdbd/run/libravdb.sock");
+});
+
 test("defaultEndpoint prefers the Homebrew socket when the user-local socket is absent", () => {
   const endpoint = defaultEndpoint(
     "darwin",

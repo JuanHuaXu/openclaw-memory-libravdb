@@ -439,10 +439,11 @@ export function defaultEndpoint(
     return "tcp:127.0.0.1:37421";
   }
 
+  const joinSocketPath = path.posix.join;
   const sockName = "libravdb.sock";
   const candidateDirs = [
     // User-local (npm plugin convention)
-    homeDir?.trim() ? path.join(homeDir, ".libravdbd", "run") : null,
+    homeDir?.trim() ? joinSocketPath(homeDir, ".libravdbd", "run") : null,
     // Homebrew (Apple Silicon) — matches the Homebrew formula LaunchAgent
     "/opt/homebrew/var/libravdbd/run",
     // Homebrew (Intel Mac) / manual Linux installs
@@ -450,7 +451,7 @@ export function defaultEndpoint(
   ].filter((d): d is string => d !== null);
 
   for (const dir of candidateDirs) {
-    const sockPath = path.join(dir, sockName);
+    const sockPath = joinSocketPath(dir, sockName);
     try {
       if (pathExists(sockPath)) {
         return `unix:${sockPath}`;
@@ -462,9 +463,9 @@ export function defaultEndpoint(
 
   // Fallback to the original user-local path so error messages stay familiar.
   const baseDir = homeDir?.trim()
-    ? path.join(homeDir, ".libravdbd", "run")
-    : path.join(".", ".libravdbd", "run");
-  return `unix:${path.join(baseDir, sockName)}`;
+    ? joinSocketPath(homeDir, ".libravdbd", "run")
+    : joinSocketPath(".", ".libravdbd", "run");
+  return `unix:${joinSocketPath(baseDir, sockName)}`;
 }
 
 export function buildSidecarEnv(cfg: PluginConfig): Record<string, string> {
