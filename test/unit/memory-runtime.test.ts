@@ -164,6 +164,24 @@ test("memory runtime bridge keeps the legacy string search shape", async () => {
   assert.equal(result.results[0]?.content, "remembered item");
 });
 
+test("memory runtime bridge does not authorize hidden paths from legacy search results", async () => {
+  const rpc = new FakeRpc();
+  const runtime = buildMemoryRuntimeBridge(async () => rpc as never, {});
+  const { manager } = await runtime.getMemorySearchManager();
+
+  await manager.search("find prior context", { userId: "u1" });
+  await assert.rejects(
+    manager.readFile({ relPath: "user%3Au1::m1", from: 1, lines: 1 }),
+    /not returned by this search manager/,
+  );
+
+  assert.equal(
+    rpc.calls.some((call) => call.method === "list_collection"),
+    false,
+    "legacy searches should not authorize paths they did not return",
+  );
+});
+
 test("memory runtime bridge respects disabled cross-session recall", async () => {
   const rpc = new FakeRpc();
   const runtime = buildMemoryRuntimeBridge(async () => rpc as never, {
@@ -241,6 +259,24 @@ test("memory runtime bridge round-trips encoded collection names in result paths
   assert.equal(typeof path, "string");
   const loaded = await manager.readFile({ relPath: path ?? "", from: 1, lines: 1 });
   assert.equal(loaded.text, "remembered item");
+});
+
+test("memory runtime bridge rejects readFile paths not returned by search", async () => {
+  const rpc = new FakeRpc();
+  const runtime = buildMemoryRuntimeBridge(async () => rpc as never, {});
+  const { manager } = await runtime.getMemorySearchManager();
+
+  await manager.search({ query: "find prior context", userId: "u1" });
+  await assert.rejects(
+    manager.readFile({ relPath: "global::m1", from: 1, lines: 1 }),
+    /not returned by this search manager/,
+  );
+
+  assert.equal(
+    rpc.calls.some((call) => call.method === "list_collection"),
+    false,
+    "crafted paths should be rejected before collection listing",
+  );
 });
 
 test("memory runtime bridge exposes cached status and keeps legacy helpers delegated", async () => {
