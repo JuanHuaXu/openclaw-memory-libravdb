@@ -1,5 +1,5 @@
 import type { RpcGetter } from "./plugin-runtime.js";
-import { resolveDurableNamespace } from "./memory-scopes.js";
+import { resolveDurableNamespace, resolveUserCollection } from "./memory-scopes.js";
 import { resolveIdentity } from "./identity.js";
 import { detectDreamQuerySignal, resolveDreamCollection } from "./dream-routing.js";
 import type { PluginConfig, LoggerLike, SearchResult } from "./types.js";
@@ -205,7 +205,7 @@ function resolveSearchCollections(cfg: PluginConfig, userId: string, sessionId?:
     return sessionId ? [resolveSessionSearchCollection(cfg, sessionId)] : [];
   }
 
-  const collections = [`user:${userId}`, "global"];
+  const collections = [resolveUserCollection(userId), "global"];
   if (!sessionId) {
     return collections;
   }

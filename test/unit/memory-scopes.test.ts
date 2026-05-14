@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveDurableNamespace, validateNamespace } from "../../src/memory-scopes.js";
+import { resolveDurableNamespace, resolveUserCollection, validateNamespace } from "../../src/memory-scopes.js";
 
 test("resolveDurableNamespace trims inputs and prefers sessionKey over agentId", () => {
   assert.equal(
@@ -37,4 +37,14 @@ test("validateNamespace rejects invalid collection names", () => {
   assert.throws(() => validateNamespace("1starts-with-number"), /Invalid collection namespace/);
   assert.throws(() => validateNamespace("has spaces"), /Invalid collection namespace/);
   assert.throws(() => validateNamespace("has\nnewline"), /Invalid collection namespace/);
+});
+
+test("resolveUserCollection validates the full prefixed collection name", () => {
+  assert.equal(resolveUserCollection("u1"), "user:u1");
+  assert.equal(resolveUserCollection("  session-key:abc  "), "user:session-key:abc");
+
+  assert.throws(() => resolveUserCollection(""), /userId must be non-empty/);
+  assert.throws(() => resolveUserCollection("1starts-with-number"), /Invalid collection namespace/);
+  assert.throws(() => resolveUserCollection("has spaces"), /Invalid collection namespace/);
+  assert.throws(() => resolveUserCollection("a".repeat(124)), /Invalid collection namespace/);
 });

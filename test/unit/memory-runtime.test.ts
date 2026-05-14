@@ -104,6 +104,25 @@ test("memory runtime bridge routes dream queries to the dream collection when cr
   }
 });
 
+test("memory runtime bridge rejects invalid dream collections before daemon search", async () => {
+  const rpc = new FakeRpc();
+  const runtime = buildMemoryRuntimeBridge(async () => rpc as never, {});
+  const { manager } = await runtime.getMemorySearchManager();
+
+  await assert.rejects(
+    manager.search({
+      query: "tell me about your dreams from last week",
+      userId: "a".repeat(123),
+    }),
+    /Invalid collection namespace/,
+  );
+  assert.equal(
+    rpc.calls.some((call) => call.method === "search_text"),
+    false,
+    "invalid dream collection should not be sent to the daemon",
+  );
+});
+
 test("memory runtime bridge treats dream queries as session-scoped searches when cross-session recall is disabled", async () => {
   const rpc = new FakeRpc();
   const runtime = buildMemoryRuntimeBridge(async () => rpc as never, { crossSessionRecall: false });
