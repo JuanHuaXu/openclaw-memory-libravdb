@@ -171,6 +171,30 @@ For foreground debugging:
 libravdbd serve
 ```
 
+### Incompatible database or embedding profile
+
+If the daemon exits with `database format is incompatible` or `database
+embedding profile is incompatible`, it is refusing to open a store whose saved
+format or embedding fingerprint differs from the current daemon settings. This
+fail-closed behavior protects the store from mixing incompatible vector spaces.
+
+Before changing anything, back up both files for the affected store:
+
+- the database file, such as `$HOME/.libravdbd/data_nomic-embed-text-v1_5.libravdb`
+- the adjacent `.embedding.json` metadata file
+
+Then choose one recovery path:
+
+- downgrade to the daemon version that created the store; or
+- move the old store aside, start the new daemon so it creates a fresh store,
+  and rebuild/reingest memories with the current embedding profile.
+
+This can affect legacy local profiles such as older `all-minilm-l6-v2` setups
+when daemon defaults or model metadata change across releases. It is not
+expected for stores that stay on the current packaged profiles and assets. See
+[Embedding Profiles](./embedding-profiles.md#store-compatibility-and-upgrades)
+for more detail.
+
 ### Hash mismatch
 
 Do not bypass a checksum mismatch. Delete the corrupt or stale asset and rerun
