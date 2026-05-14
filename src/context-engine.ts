@@ -585,7 +585,8 @@ export function buildContextEngineFactory(
     section7HopThreshold: cfg.section7HopThreshold,
     section7CoarseTopK: cfg.section7CoarseTopK,
     section7SecondPassTopK: cfg.section7SecondPassTopK,
-    section7AuthorityRecencyLambda: cfg.section7AuthorityRecencyLambda,
+    // deprecated in libravdb-contracts — no daemon handler (daemon v1.4.68)
+    // section7AuthorityRecencyLambda: cfg.section7AuthorityRecencyLambda,
     section7AuthorityRecencyWeight: cfg.section7AuthorityRecencyWeight,
     section7AuthorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
     section7AuthorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
@@ -594,9 +595,11 @@ export function buildContextEngineFactory(
     recoveryFloorScore: cfg.recoveryFloorScore,
     recoveryMinTopK: cfg.recoveryMinTopK,
     recoveryMinConfidenceMean: cfg.recoveryMinConfidenceMean,
-    recencyLambdaSession: cfg.recencyLambdaSession,
+    // deprecated in libravdb-contracts — no daemon handler (daemon v1.4.68)
+    // recencyLambdaSession: cfg.recencyLambdaSession,
     recencyLambdaUser: cfg.recencyLambdaUser,
-    recencyLambdaGlobal: cfg.recencyLambdaGlobal,
+    // deprecated in libravdb-contracts — no daemon handler (daemon v1.4.68)
+    // recencyLambdaGlobal: cfg.recencyLambdaGlobal,
     ingestionGateThreshold: cfg.ingestionGateThreshold,
     // deprecated in libravdb-contracts — no daemon handler (daemon v1.4.68)
     // compactThreshold: getDynamicCompactThreshold(tokenBudget),
