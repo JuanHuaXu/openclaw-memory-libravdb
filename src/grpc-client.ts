@@ -20,6 +20,38 @@ export function resolveGrpcTarget(endpoint: string): string {
   return endpoint.startsWith("tcp:") ? endpoint.substring(4) : endpoint;
 }
 
+export function resolveGrpcCredentialMode(endpoint: string): "insecure" | "tls" {
+  const target = resolveGrpcTarget(endpoint).trim();
+  if (target.startsWith("unix:")) {
+    return "insecure";
+  }
+
+  const host = extractGrpcHost(target);
+  return isLoopbackHost(host) ? "insecure" : "tls";
+}
+
+function resolveGrpcCredentials(endpoint: string): grpc.ChannelCredentials {
+  return resolveGrpcCredentialMode(endpoint) === "insecure"
+    ? grpc.credentials.createInsecure()
+    : grpc.credentials.createSsl();
+}
+
+function extractGrpcHost(target: string): string {
+  const withoutDnsPrefix = target.startsWith("dns:///") ? target.slice("dns:///".length) : target;
+  if (withoutDnsPrefix.startsWith("[")) {
+    const closeBracket = withoutDnsPrefix.indexOf("]");
+    return closeBracket > 0 ? withoutDnsPrefix.slice(1, closeBracket) : withoutDnsPrefix;
+  }
+
+  const portSeparator = withoutDnsPrefix.lastIndexOf(":");
+  return portSeparator > 0 ? withoutDnsPrefix.slice(0, portSeparator) : withoutDnsPrefix;
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
 export class GrpcKernelClient {
   private client: any;
   private readonly secret: string | undefined;
@@ -43,7 +75,7 @@ export class GrpcKernelClient {
 
     const target = resolveGrpcTarget(options.endpoint);
 
-    this.client = new kernelService(target, grpc.credentials.createInsecure());
+    this.client = new kernelService(target, resolveGrpcCredentials(options.endpoint));
   }
 
   private getMetadata(signed = true): grpc.Metadata {
