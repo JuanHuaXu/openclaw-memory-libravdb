@@ -579,6 +579,7 @@ export function buildContextEngineFactory(
   cfg: PluginConfig,
   logger: LoggerLike = console,
 ) {
+  const predictiveContextCache = new Map<string, import("./types.js").PredictedContext[]>();
   let cachedIdentity: ResolvedIdentity | null = null;
   let cachedSessionKey: string | undefined;
 
@@ -1030,7 +1031,7 @@ export function buildContextEngineFactory(
           config: buildAssemblyConfig(args.tokenBudget),
         });
         const assembled = normalizeAssembleResult(resp);
-        return enforceTokenBudgetInvariant(
+        const enforced = enforceTokenBudgetInvariant(
           await augmentWithExactRecall(assembled, {
             queryText: args.prompt ?? messages[messages.length - 1]?.content ?? "",
             userId,
@@ -1039,6 +1040,13 @@ export function buildContextEngineFactory(
           }),
           args.tokenBudget,
         );
+        const predictions = predictiveContextCache.get(sessionId) || [];
+        predictiveContextCache.delete(sessionId);
+        if (predictions.length > 0) {
+          const injection = ["<predictive_context>", ...predictions.map((p) => p.text), "</predictive_context>"].join("\n");
+          enforced.systemPromptAddition = appendSystemPromptAddition(enforced.systemPromptAddition, injection);
+        }
+        return enforced;
       } catch (error) {
         logger.warn?.(
           `LibraVDB assemble sidecar failed, using budget-clamped fallback context: ${error instanceof Error ? error.message : String(error)
@@ -1101,6 +1109,10 @@ export function buildContextEngineFactory(
             tokenBudget: args.tokenBudget,
             currentTokenCount,
           });
+          const predictions = (result as any).predictions;
+          if (Array.isArray(predictions) && predictions.length > 0) {
+            predictiveContextCache.set(sessionId, predictions);
+          }
           return result;
         }
         const rpc = await runtime.getRpc();
@@ -1117,6 +1129,10 @@ export function buildContextEngineFactory(
           tokenBudget: args.tokenBudget,
           currentTokenCount,
         });
+        const predictions = (result as any).predictions;
+        if (Array.isArray(predictions) && predictions.length > 0) {
+          predictiveContextCache.set(sessionId, predictions);
+        }
         return result;
       } catch (error) {
         logger.warn?.(

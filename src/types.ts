@@ -161,3 +161,9 @@ export interface SidecarHandle {
 export interface RpcCallOptions {
   timeoutMs: number;
 }
+
+export interface PredictedContext {
+  id: string;
+  text: string;
+  reason: string;
+}
