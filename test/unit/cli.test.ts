@@ -144,6 +144,8 @@ test("full CLI registration exposes standard memory commands and LibraVDB operat
   assert.ok(status);
   assert.ok(status.options.includes("--json"));
   assert.ok(status.options.includes("--agent <id>"));
+  assert.ok(status.options.includes("--index"));
+  assert.ok(status.options.includes("--force"));
 
   const search = memory.commands.find((command) => command.name() === "search");
   assert.ok(search);
@@ -224,6 +226,141 @@ test("status command shuts the plugin runtime down after printing status", async
     console.table = originalTable;
   }
 
+  assert.equal(shutdownCalls, 1);
+});
+
+test("status --index requires --force before rebuilding", async () => {
+  let registered: RegisteredCli | null = null;
+  let shutdownCalls = 0;
+  let getRpcCalls = 0;
+  const errors: string[] = [];
+  const api = {
+    config: selectedConfig,
+    registerCli(builder: unknown, opts: RegisteredCli["opts"]) {
+      registered = { builder: builder as RegisteredCli["builder"], opts };
+    },
+  };
+
+  registerMemoryCli(
+    api as never,
+    {
+      async getRpc() {
+        getRpcCalls += 1;
+        throw new Error("status --index without --force should not start RPC");
+      },
+      async getKernel() {
+        return null;
+      },
+      async emitLifecycleHint() {},
+      onShutdown() {},
+      async shutdown() {
+        shutdownCalls += 1;
+      },
+    },
+    {},
+    {
+      error(message: string) {
+        errors.push(message);
+      },
+    },
+  );
+
+  assert.ok(registered);
+  const cli = registered as RegisteredCli;
+  const program = new FakeCommand("openclaw");
+  cli.builder({ program });
+
+  const memory = program.commands.find((command) => command.name() === "memory");
+  const status = memory?.commands.find((command) => command.name() === "status");
+  assert.ok(status?.handler);
+
+  const previousExitCode = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    await status.handler?.({ index: true });
+    assert.equal(process.exitCode, 1);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
+
+  assert.equal(getRpcCalls, 0);
+  assert.equal(shutdownCalls, 1);
+  assert.match(errors[0] ?? "", /--force/);
+});
+
+test("status --index --force rebuilds before printing status", async () => {
+  let registered: RegisteredCli | null = null;
+  let shutdownCalls = 0;
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const api = {
+    config: selectedConfig,
+    registerCli(builder: unknown, opts: RegisteredCli["opts"]) {
+      registered = { builder: builder as RegisteredCli["builder"], opts };
+    },
+  };
+
+  registerMemoryCli(
+    api as never,
+    {
+      async getRpc() {
+        return {
+          async call(method: string, params: Record<string, unknown>) {
+            calls.push({ method, params });
+            if (method === "rebuild_index") {
+              return {
+                collectionsProcessed: 1,
+                recordsReindexed: 2,
+                collectionsRecreated: 0,
+                errors: [],
+              };
+            }
+            if (method === "status") {
+              return {
+                ok: true,
+                turnCount: 3,
+                memoryCount: 3,
+                lifecycleHintCount: 1,
+                gatingThreshold: 0.35,
+                abstractiveReady: true,
+                embeddingProfile: "all-minilm-l6-v2",
+                message: "ok",
+              };
+            }
+            throw new Error(`unexpected rpc method: ${method}`);
+          },
+        } as never;
+      },
+      async getKernel() {
+        return null;
+      },
+      async emitLifecycleHint() {},
+      onShutdown() {},
+      async shutdown() {
+        shutdownCalls += 1;
+      },
+    },
+    {},
+  );
+
+  assert.ok(registered);
+  const cli = registered as RegisteredCli;
+  const program = new FakeCommand("openclaw");
+  cli.builder({ program });
+
+  const memory = program.commands.find((command) => command.name() === "memory");
+  const status = memory?.commands.find((command) => command.name() === "status");
+  assert.ok(status?.handler);
+
+  const originalTable = console.table;
+  console.table = (() => undefined) as typeof console.table;
+  try {
+    await status.handler?.({ index: true, force: true });
+  } finally {
+    console.table = originalTable;
+  }
+
+  assert.deepEqual(calls.map((call) => call.method), ["rebuild_index", "status"]);
+  assert.deepEqual(calls[0]?.params, { namespace: "" });
   assert.equal(shutdownCalls, 1);
 });
 

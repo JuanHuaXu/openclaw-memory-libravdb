@@ -55,6 +55,7 @@ type CliOptionBag = {
   yes?: boolean;
   json?: boolean;
   deep?: boolean;
+  index?: boolean;
   fix?: boolean;
   force?: boolean;
   verbose?: boolean;
@@ -121,7 +122,8 @@ export function registerMemoryCli(
         .option("--agent <id>", "Agent id")
         .option("--json", "Print JSON")
         .option("--deep", "Probe authored collection search health")
-        .option("--index", "Refresh delegated index state before printing status")
+        .option("--index", "Rebuild the index before printing status")
+        .option("--force", "Required with --index: confirm index rebuild")
         .option("--fix", "Accepted for OpenClaw memory CLI compatibility")
         .option("--verbose", "Verbose logging")
         .action(async (opts) => {
@@ -252,6 +254,18 @@ async function runStatus(
   logger: LoggerLike,
   opts: CliOptionBag = {},
 ): Promise<void> {
+  if (opts.index) {
+    if (!opts.force) {
+      logger.error("LibraVDB status --index performs an index rebuild. Re-run with --force to continue.");
+      process.exitCode = 1;
+      return;
+    }
+    const ok = await runIndex(runtime, cfg, { ...opts, verbose: false }, logger, { quiet: true });
+    if (!ok) {
+      return;
+    }
+  }
+
   try {
     const rpc = await runtime.getRpc();
     const status = await rpc.call<StatusResult>("status", {});
@@ -383,11 +397,11 @@ async function runIndex(
   opts: CliOptionBag | undefined,
   logger: LoggerLike,
   params: { quiet?: boolean } = {},
-): Promise<void> {
+): Promise<boolean> {
   if (!opts?.force) {
     logger.error("LibraVDB index rebuild requires --force. This re-embeds all stored documents with the current model and may be slow.");
     process.exitCode = 1;
-    return;
+    return false;
   }
 
   const namespace = resolveCliNamespace(opts);
@@ -425,10 +439,13 @@ async function runIndex(
     if ((result.errors?.length ?? 0) > 0 && (result.recordsReindexed ?? 0) === 0) {
       logger.error("LibraVDB index rebuild completed with errors and no records reindexed.");
       process.exitCode = 1;
+      return false;
     }
+    return true;
   } catch (error) {
     logger.error(`LibraVDB index rebuild failed: ${formatError(error)}`);
     process.exitCode = 1;
+    return false;
   }
 }
 
