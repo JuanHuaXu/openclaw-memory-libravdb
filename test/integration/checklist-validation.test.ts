@@ -32,7 +32,6 @@ test("manifest schema includes runtime-consumed context tuning keys", async () =
   const manifest = JSON.parse(await readFile(path.join(repoRoot, "openclaw.plugin.json"), "utf8"));
   const properties = manifest.configSchema.properties as Record<string, { type?: string }>;
   const tuningKeys = [
-    "section7StartupTokenBudgetTokens",
     "continuityMinTurns",
     "continuityTailBudgetTokens",
     "continuityPriorContextTokens",
@@ -46,10 +45,8 @@ test("manifest schema includes runtime-consumed context tuning keys", async () =
     "section7AuthorityRecencyWeight",
     "section7AuthorityFrequencyWeight",
     "section7AuthorityAuthoredWeight",
-    "summaryExpansionConfidenceThreshold",
-    "summaryExpansionDepth",
-    "summaryExpansionTokenBudget",
-    "summaryExpansionPenaltyFactor",
+    "section7AuthoritySalienceWeight",
+    "section7RecencyAccessLambda",
     "recoveryFloorScore",
     "recoveryMinTopK",
     "recoveryMinConfidenceMean",

@@ -64,9 +64,6 @@
       "useSessionSummarySearchExperiment": {
         "type": "boolean"
       },
-      "section7StartupTokenBudgetTokens": {
-        "type": "number"
-      },
       "section7CoarseTopK": {
         "type": "number"
       },
@@ -95,6 +92,12 @@
         "type": "number"
       },
       "section7AuthorityAuthoredWeight": {
+        "type": "number"
+      },
+      "section7AuthoritySalienceWeight": {
+        "type": "number"
+      },
+      "section7RecencyAccessLambda": {
         "type": "number"
       },
       "embeddingRuntimePath": {
@@ -294,18 +297,6 @@
         "type": "number"
       },
       "continuityPriorContextTokens": {
-        "type": "number"
-      },
-      "summaryExpansionConfidenceThreshold": {
-        "type": "number"
-      },
-      "summaryExpansionDepth": {
-        "type": "number"
-      },
-      "summaryExpansionTokenBudget": {
-        "type": "number"
-      },
-      "summaryExpansionPenaltyFactor": {
         "type": "number"
       },
       "recoveryFloorScore": {

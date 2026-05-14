@@ -575,11 +575,9 @@ export function buildContextEngineFactory(
     authoredSoftBudgetFraction: cfg.authoredSoftBudgetFraction,
     elevatedGuidanceBudgetFraction: cfg.elevatedGuidanceBudgetFraction,
     topK: cfg.topK,
-    section7StartupTokenBudgetTokens: cfg.section7StartupTokenBudgetTokens,
     continuityMinTurns: cfg.continuityMinTurns,
     continuityTailBudgetTokens: cfg.continuityTailBudgetTokens,
     continuityPriorContextTokens: cfg.continuityPriorContextTokens,
-    compactThreshold: getDynamicCompactThreshold(tokenBudget),
     compactSessionTokenBudget: cfg.compactSessionTokenBudget,
     section7Theta1: cfg.section7Theta1,
     section7Kappa: cfg.section7Kappa,
@@ -591,10 +589,8 @@ export function buildContextEngineFactory(
     section7AuthorityRecencyWeight: cfg.section7AuthorityRecencyWeight,
     section7AuthorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
     section7AuthorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
-    summaryExpansionConfidenceThreshold: cfg.summaryExpansionConfidenceThreshold,
-    summaryExpansionDepth: cfg.summaryExpansionDepth,
-    summaryExpansionTokenBudget: cfg.summaryExpansionTokenBudget,
-    summaryExpansionPenaltyFactor: cfg.summaryExpansionPenaltyFactor,
+    section7AuthoritySalienceWeight: cfg.section7AuthoritySalienceWeight,
+    section7RecencyAccessLambda: cfg.section7RecencyAccessLambda,
     recoveryFloorScore: cfg.recoveryFloorScore,
     recoveryMinTopK: cfg.recoveryMinTopK,
     recoveryMinConfidenceMean: cfg.recoveryMinConfidenceMean,
@@ -602,6 +598,8 @@ export function buildContextEngineFactory(
     recencyLambdaUser: cfg.recencyLambdaUser,
     recencyLambdaGlobal: cfg.recencyLambdaGlobal,
     ingestionGateThreshold: cfg.ingestionGateThreshold,
+    // deprecated in libravdb-contracts — no daemon handler (daemon v1.4.68)
+    // compactThreshold: getDynamicCompactThreshold(tokenBudget),
   });
 
   async function augmentWithExactRecall(
