@@ -7,6 +7,7 @@ import {
   computeBackoffMs,
   defaultEndpoint,
   isTcpEndpoint,
+  parseTcpEndpoint,
   resolveConfiguredEndpoint,
   resolveEndpoint,
   startSidecar,
@@ -101,6 +102,25 @@ test("computeBackoffMs applies capped exponential backoff", () => {
 test("isTcpEndpoint detects tcp endpoints", () => {
   assert.equal(isTcpEndpoint("tcp:127.0.0.1:7777"), true);
   assert.equal(isTcpEndpoint("/tmp/x.sock"), false);
+});
+
+test("parseTcpEndpoint normalizes accepted TCP host and port values", () => {
+  assert.deepEqual(parseTcpEndpoint("tcp:127.0.0.1:7777"), { host: "127.0.0.1", port: 7777 });
+  assert.deepEqual(parseTcpEndpoint("tcp:[::1]:7777"), { host: "::1", port: 7777 });
+  assert.deepEqual(parseTcpEndpoint("tcp: 127.0.0.1 : 7777 "), { host: "127.0.0.1", port: 7777 });
+});
+
+test("parseTcpEndpoint rejects malformed TCP endpoints", () => {
+  for (const endpoint of [
+    "unix:/tmp/x.sock",
+    "tcp:",
+    "tcp::123",
+    "tcp:[::1:7777",
+    "tcp:[::1]:notaport",
+    "tcp:[::1]:70000",
+  ]) {
+    assert.equal(parseTcpEndpoint(endpoint), null, endpoint);
+  }
 });
 
 test("buildSidecarEnv maps embedding config into sidecar environment", () => {
