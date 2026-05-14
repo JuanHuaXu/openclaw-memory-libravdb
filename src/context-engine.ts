@@ -635,7 +635,6 @@ export function buildContextEngineFactory(
     continuityMinTurns: cfg.continuityMinTurns,
     continuityTailBudgetTokens: cfg.continuityTailBudgetTokens,
     continuityPriorContextTokens: cfg.continuityPriorContextTokens,
-    compactThreshold: getDynamicCompactThreshold(tokenBudget),
     compactSessionTokenBudget: cfg.compactSessionTokenBudget,
     section7Theta1: cfg.section7Theta1,
     section7Kappa: cfg.section7Kappa,
@@ -643,17 +642,24 @@ export function buildContextEngineFactory(
     section7HopThreshold: cfg.section7HopThreshold,
     section7CoarseTopK: cfg.section7CoarseTopK,
     section7SecondPassTopK: cfg.section7SecondPassTopK,
-    section7AuthorityRecencyLambda: cfg.section7AuthorityRecencyLambda,
+    // deprecated in libravdb-contracts — no daemon handler (daemon v1.4.68)
+    // section7AuthorityRecencyLambda: cfg.section7AuthorityRecencyLambda,
     section7AuthorityRecencyWeight: cfg.section7AuthorityRecencyWeight,
     section7AuthorityFrequencyWeight: cfg.section7AuthorityFrequencyWeight,
     section7AuthorityAuthoredWeight: cfg.section7AuthorityAuthoredWeight,
+    section7AuthoritySalienceWeight: cfg.section7AuthoritySalienceWeight,
+    section7RecencyAccessLambda: cfg.section7RecencyAccessLambda,
     recoveryFloorScore: cfg.recoveryFloorScore,
     recoveryMinTopK: cfg.recoveryMinTopK,
     recoveryMinConfidenceMean: cfg.recoveryMinConfidenceMean,
-    recencyLambdaSession: cfg.recencyLambdaSession,
+    // deprecated in libravdb-contracts — no daemon handler (daemon v1.4.68)
+    // recencyLambdaSession: cfg.recencyLambdaSession,
     recencyLambdaUser: cfg.recencyLambdaUser,
-    recencyLambdaGlobal: cfg.recencyLambdaGlobal,
+    // deprecated in libravdb-contracts — no daemon handler (daemon v1.4.68)
+    // recencyLambdaGlobal: cfg.recencyLambdaGlobal,
     ingestionGateThreshold: cfg.ingestionGateThreshold,
+    // deprecated in libravdb-contracts — no daemon handler (daemon v1.4.68)
+    // compactThreshold: getDynamicCompactThreshold(tokenBudget),
   });
 
   async function augmentWithExactRecall(

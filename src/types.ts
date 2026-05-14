@@ -64,7 +64,6 @@ export interface PluginConfig {
   authoredHardBudgetFraction?: number;
   authoredSoftBudgetFraction?: number;
   elevatedGuidanceBudgetFraction?: number;
-  section7StartupTokenBudgetTokens?: number;
   continuityMinTurns?: number;
   continuityTailBudgetTokens?: number;
   continuityPriorContextTokens?: number;
@@ -81,10 +80,8 @@ export interface PluginConfig {
   section7AuthorityRecencyWeight?: number;
   section7AuthorityFrequencyWeight?: number;
   section7AuthorityAuthoredWeight?: number;
-  summaryExpansionConfidenceThreshold?: number;
-  summaryExpansionDepth?: number;
-  summaryExpansionTokenBudget?: number;
-  summaryExpansionPenaltyFactor?: number;
+  section7AuthoritySalienceWeight?: number;
+  section7RecencyAccessLambda?: number;
   recoveryFloorScore?: number;
   recoveryMinTopK?: number;
   recoveryMinConfidenceMean?: number;

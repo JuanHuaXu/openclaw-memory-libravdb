@@ -130,6 +130,23 @@ test("assemble passes correct configuration mapping and returns expected payload
     tokenBudgetFraction: 0.8,
     useSessionRecallProjection: true,
     continuityMinTurns: 4,
+    continuityTailBudgetTokens: 640,
+    continuityPriorContextTokens: 320,
+    section7CoarseTopK: 24,
+    section7SecondPassTopK: 6,
+    section7Theta1: 0.74,
+    section7Kappa: 2.5,
+    section7HopEta: 0.31,
+    section7HopThreshold: 0.52,
+    section7AuthorityRecencyLambda: 0.002,
+    section7AuthorityRecencyWeight: 0.4,
+    section7AuthorityFrequencyWeight: 0.3,
+    section7AuthorityAuthoredWeight: 0.2,
+    section7AuthoritySalienceWeight: 0.40,
+    section7RecencyAccessLambda: 0.00001,
+    recoveryFloorScore: 0.12,
+    recoveryMinTopK: 5,
+    recoveryMinConfidenceMean: 0.42,
   };
 
   const context = buildContextEngineFactory(async () => rpc as never, cfg);
@@ -156,8 +173,24 @@ test("assemble passes correct configuration mapping and returns expected payload
   assert.equal(params.config.tokenBudgetFraction, 0.8);
   assert.equal(params.config.useSessionRecallProjection, true);
   assert.equal(params.config.continuityMinTurns, 4);
-  assert.equal(params.config.compactThreshold, 800);
-  assert.equal(params.emitDebug, true);
+  assert.equal(params.config.continuityTailBudgetTokens, 640);
+  assert.equal(params.config.continuityPriorContextTokens, 320);
+  assert.equal(params.config.section7CoarseTopK, 24);
+  assert.equal(params.config.section7SecondPassTopK, 6);
+  assert.equal(params.config.section7Theta1, 0.74);
+  assert.equal(params.config.section7Kappa, 2.5);
+  assert.equal(params.config.section7HopEta, 0.31);
+  assert.equal(params.config.section7HopThreshold, 0.52);
+  assert.equal(params.config.section7AuthorityRecencyLambda, 0.002);
+  assert.equal(params.config.section7AuthorityRecencyWeight, 0.4);
+  assert.equal(params.config.section7AuthorityFrequencyWeight, 0.3);
+  assert.equal(params.config.section7AuthorityAuthoredWeight, 0.2);
+  assert.equal(params.config.section7AuthoritySalienceWeight, 0.40);
+  assert.equal(params.config.section7RecencyAccessLambda, 0.00001);
+  assert.equal(params.config.recoveryFloorScore, 0.12);
+  assert.equal(params.config.recoveryMinTopK, 5);
+  assert.equal(params.config.recoveryMinConfidenceMean, 0.42);
+  assert.equal(params.config.emitDebug, true);
 
   // Verify inbound response handling
   assert.equal(assembled.estimatedTokens, 150);
