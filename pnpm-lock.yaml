@@ -7,10 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      openclaw:
-        specifier: '*'
-        version: 2026.4.11(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)(@napi-rs/canvas@0.1.97)(@types/express@5.0.6)(apache-arrow@18.1.0)(typescript@6.0.3)
     devDependencies:
       '@bufbuild/protobuf':
         specifier: 1.7.2
@@ -33,6 +29,9 @@ importers:
       esbuild:
         specifier: ^0.27.0
         version: 0.27.7
+      openclaw:
+        specifier: 2026.4.11
+        version: 2026.4.11(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)(@napi-rs/canvas@0.1.97)(@types/express@5.0.6)(apache-arrow@18.1.0)(typescript@6.0.3)
       typescript:
         specifier: ^6.0.3
         version: 6.0.3

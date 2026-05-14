@@ -64,9 +64,6 @@
     "prepack": "npm run build",
     "build:daemon": "bash scripts/build-daemon.sh"
   },
-  "dependencies": {
-    "openclaw": "*"
-  },
   "devDependencies": {
     "@bufbuild/protobuf": "1.7.2",
     "@grpc/grpc-js": "^1.14.3",
@@ -75,6 +72,7 @@
     "@types/node": "^20.11.0",
     "@xdarkicex/libravdb-contracts": "^0.0.6",
     "esbuild": "^0.27.0",
+    "openclaw": "2026.4.11",
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
