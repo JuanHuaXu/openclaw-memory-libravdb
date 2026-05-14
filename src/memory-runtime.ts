@@ -67,6 +67,7 @@ function createMemorySearchManager(
 ) {
   let cachedStatus = initialStatus;
   let cachedIdentityUserId: string | null = null;
+  const returnedSearchPaths = new Set<string>();
 
   function getResolvedUserId(sessionKey: string | undefined): string {
     if (cachedIdentityUserId !== null) return cachedIdentityUserId;
@@ -133,9 +134,16 @@ function createMemorySearchManager(
       if (legacyCall) {
         return { results: legacyResults };
       }
-      return filteredResults.map(toMemorySearchResult);
+      const memoryResults = filteredResults.map(toMemorySearchResult);
+      for (const item of memoryResults) {
+        returnedSearchPaths.add(item.path);
+      }
+      return memoryResults;
     },
     async readFile(params: { relPath: string; from?: number; lines?: number }) {
+      if (!returnedSearchPaths.has(params.relPath)) {
+        throw new Error("LibraVDB memory path was not returned by this search manager");
+      }
       const located = await loadSearchResultText(getRpc, params.relPath);
       const fromLine = Math.max(1, params.from ?? 1);
       const lineCount = Math.max(1, params.lines ?? 200);
