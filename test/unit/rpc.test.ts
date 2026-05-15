@@ -66,7 +66,10 @@ class FakeSocket implements SidecarSocket {
     this.writes.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
-  destroy(): void {
+  destroy(error?: Error): void {
+    if (error) {
+      this.emitError(error);
+    }
     for (const handler of this.closeHandlers) {
       handler();
     }
@@ -416,6 +419,16 @@ test("RpcClient rejects pending calls on runtime socket error", async () => {
   socket.emitError(new Error("ECONNRESET"));
 
   await assert.rejects(pending, /ECONNRESET/);
+});
+
+test("RpcClient rejects pending calls on malformed response frames", async () => {
+  const socket = new FakeSocket();
+  const client = new RpcClient(socket, { timeoutMs: 100 });
+
+  const pending = client.call("health", {});
+  socket.emitData(frameServerPayload(Buffer.from([0xff])));
+
+  await assert.rejects(pending, /Protocol violation: malformed RPC response frame/);
 });
 
 test("RpcClient supports per-call timeout overrides", async () => {

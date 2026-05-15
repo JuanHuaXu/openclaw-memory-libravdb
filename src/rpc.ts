@@ -174,7 +174,9 @@ export class RpcClient {
       const payload = this.rxBuf.subarray(4, frameSize);
       this.rxBuf = this.rxBuf.subarray(frameSize);
 
-      this.dispatchMessage(payload);
+      if (!this.dispatchMessage(payload)) {
+        return;
+      }
     }
 
     // Compaction guard: release large backing allocations if the remainder is tiny
@@ -186,18 +188,18 @@ export class RpcClient {
     }
   }
 
-  private dispatchMessage(payload: Buffer): void {
+  private dispatchMessage(payload: Buffer): boolean {
     try {
       const msg = RpcResponse.fromBinary(payload as Uint8Array);
 
       if (typeof msg.id !== "bigint") {
         this.socket.destroy(new Error("Protocol violation: expected bigint message id"));
-        return;
+        return false;
       }
 
       const pending = this.pending.get(msg.id);
       if (!pending) {
-        return;
+        return true;
       }
 
       clearTimeout(pending.timer);
@@ -206,7 +208,7 @@ export class RpcClient {
       if (msg.error) {
         const message = msg.error.message?.trim() || `RPC error ${msg.error.code}`;
         pending.reject(new Error(msg.error.code ? `${message} (${msg.error.code})` : message));
-        return;
+        return true;
       }
 
       try {
@@ -214,8 +216,11 @@ export class RpcClient {
       } catch (error) {
         pending.reject(error instanceof Error ? error : new Error(String(error)));
       }
-    } catch {
-      // Ignore malformed frames
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.socket.destroy(new Error(`Protocol violation: malformed RPC response frame: ${message}`));
+      return false;
     }
   }
 
