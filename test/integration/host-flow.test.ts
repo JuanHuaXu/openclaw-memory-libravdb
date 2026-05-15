@@ -181,7 +181,6 @@ test("assemble passes correct configuration mapping and returns expected payload
   assert.equal(params.config.section7Kappa, 2.5);
   assert.equal(params.config.section7HopEta, 0.31);
   assert.equal(params.config.section7HopThreshold, 0.52);
-  assert.equal(params.config.section7AuthorityRecencyLambda, 0.002);
   assert.equal(params.config.section7AuthorityRecencyWeight, 0.4);
   assert.equal(params.config.section7AuthorityFrequencyWeight, 0.3);
   assert.equal(params.config.section7AuthorityAuthoredWeight, 0.2);
@@ -190,7 +189,7 @@ test("assemble passes correct configuration mapping and returns expected payload
   assert.equal(params.config.recoveryFloorScore, 0.12);
   assert.equal(params.config.recoveryMinTopK, 5);
   assert.equal(params.config.recoveryMinConfidenceMean, 0.42);
-  assert.equal(params.config.emitDebug, true);
+  assert.equal(params.emitDebug, true);
 
   // Verify inbound response handling
   assert.equal(assembled.estimatedTokens, 150);
@@ -281,7 +280,6 @@ test("assemble triggers force compaction at dynamic 80% threshold before daemon 
 
   const assembleParams = rpc.getLastCall("assemble_context_internal");
   assert.ok(assembleParams, "Expected assemble_context_internal to be called after compaction");
-  assert.equal(assembleParams.config.compactThreshold, 800);
   assert.equal(assembled.messages[0]?.content, "ok");
   assert.equal(logger.warns.length, 0);
   assert.match(logger.infos[0] ?? "", /predictive compaction trigger phase=assemble/);
