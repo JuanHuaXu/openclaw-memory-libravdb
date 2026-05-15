@@ -781,12 +781,12 @@ export function buildContextEngineFactory(
   }
 
   function isGrpcAuthConfigured(): boolean {
+    const secret = process.env.LIBRAVDB_AUTH_SECRET?.trim();
+    const secretFile = process.env.LIBRAVDB_AUTH_SECRET_FILE?.trim();
     return (
-      typeof process.env.LIBRAVDB_AUTH_SECRET === "string" &&
-      process.env.LIBRAVDB_AUTH_SECRET.trim().length > 0
+      typeof secret === "string" && secret.length > 0
     ) || (
-      typeof process.env.LIBRAVDB_AUTH_SECRET_FILE === "string" &&
-      process.env.LIBRAVDB_AUTH_SECRET_FILE.trim().length > 0
+      typeof secretFile === "string" && secretFile.length > 0
     );
   }
 
