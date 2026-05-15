@@ -193,7 +193,9 @@
         "type": "string"
       },
       "sessionTTL": {
-        "type": "number"
+        "type": "number",
+        "minimum": 1,
+        "maximum": 2592000
       },
       "topK": {
         "type": "number"
@@ -245,6 +247,8 @@
       },
       "markdownIngestionObsidianDebounceMs": {
         "type": "number",
+        "minimum": 0,
+        "maximum": 600000,
         "default": 150
       },
       "markdownIngestionInclude": {
@@ -261,6 +265,8 @@
       },
       "markdownIngestionDebounceMs": {
         "type": "number",
+        "minimum": 0,
+        "maximum": 600000,
         "default": 150
       },
       "markdownIngestionSnapshotPath": {
@@ -281,10 +287,14 @@
       },
       "dreamPromotionDebounceMs": {
         "type": "number",
+        "minimum": 0,
+        "maximum": 600000,
         "default": 150
       },
       "lifecycleJournalMaxEntries": {
         "type": "number",
+        "minimum": 1,
+        "maximum": 100000,
         "default": 500
       },
       "compactionQualityWeight": {
@@ -314,17 +324,25 @@
       },
       "compactSessionTokenBudget": {
         "type": "number",
+        "minimum": 0,
+        "maximum": 1000000,
         "default": 2000,
         "description": "Auto-trigger compaction when the session accumulates this many tokens since the last compaction. Set to 0 to disable auto-compaction."
       },
       "continuityMinTurns": {
-        "type": "number"
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1000
       },
       "continuityTailBudgetTokens": {
-        "type": "number"
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1000000
       },
       "continuityPriorContextTokens": {
-        "type": "number"
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1000000
       },
       "recoveryFloorScore": {
         "type": "number"
@@ -343,10 +361,14 @@
       },
       "rpcTimeoutMs": {
         "type": "number",
+        "minimum": 1,
+        "maximum": 600000,
         "default": 30000
       },
       "maxRetries": {
-        "type": "number"
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100
       },
       "logLevel": {
         "type": "string"

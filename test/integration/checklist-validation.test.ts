@@ -53,7 +53,45 @@ test("manifest schema includes runtime-consumed context tuning keys", async () =
   ];
 
   for (const key of tuningKeys) {
-    assert.equal(properties[key]?.type, "number", `${key} must be accepted by configSchema`);
+    assert.ok(
+      properties[key]?.type === "number" || properties[key]?.type === "integer",
+      `${key} must be accepted by configSchema as numeric`,
+    );
+  }
+});
+
+test("manifest schema bounds operational numeric config", async () => {
+  const manifest = JSON.parse(await readFile(path.join(repoRoot, "openclaw.plugin.json"), "utf8"));
+  const properties = manifest.configSchema.properties as Record<string, {
+    type?: string;
+    minimum?: number;
+    maximum?: number;
+  }>;
+  const boundedKeys = [
+    "sessionTTL",
+    "markdownIngestionObsidianDebounceMs",
+    "markdownIngestionDebounceMs",
+    "dreamPromotionDebounceMs",
+    "lifecycleJournalMaxEntries",
+    "compactSessionTokenBudget",
+    "continuityMinTurns",
+    "continuityTailBudgetTokens",
+    "continuityPriorContextTokens",
+    "rpcTimeoutMs",
+    "maxRetries",
+  ];
+
+  for (const key of boundedKeys) {
+    const property = properties[key];
+    assert.equal(property?.type, "number", `${key} must be numeric`);
+    assert.equal(typeof property.minimum, "number", `${key} must have a minimum`);
+    assert.equal(typeof property.maximum, "number", `${key} must have a maximum`);
+    const minimum = property.minimum;
+    const maximum = property.maximum;
+    assert.ok(
+      typeof minimum === "number" && typeof maximum === "number" && maximum >= minimum,
+      `${key} maximum must be >= minimum`,
+    );
   }
 });
 
