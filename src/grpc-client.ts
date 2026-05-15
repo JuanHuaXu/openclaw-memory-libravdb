@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as fs from "fs";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 
@@ -14,26 +15,61 @@ export interface GrpcClientOptions {
   endpoint: string;
   secret?: string;
   timeoutMs?: number;
+  tlsCaPath?: string;
+  tlsMode?: "auto" | "tls" | "insecure"; // exported type: use VALID_TLS_MODES from plugin-runtime for deriving new types
 }
 
 export function resolveGrpcTarget(endpoint: string): string {
   return endpoint.startsWith("tcp:") ? endpoint.substring(4) : endpoint;
 }
 
-export function resolveGrpcCredentialMode(endpoint: string): "insecure" | "tls" {
+/**
+ * Selects gRPC credential mode based on endpoint address class.
+ *
+ * - Unix socket endpoints → plaintext (local-only transport)
+ * - Loopback addresses (localhost, 127.0.0.1, ::1) → plaintext
+ * - All other TCP and DNS targets → TLS
+ *
+ * resolveGrpcCredentials uses this classification to return the
+ * appropriate grpc.ChannelCredentials. Pass tlsCaPath to load a
+ * custom CA certificate PEM file for self-signed or private CA
+ * deployments. Omit tlsCaPath for publicly trusted certificates
+ * (Let's Encrypt, cert-manager) — the system CA pool is used.
+ */
+export function resolveGrpcCredentialMode(
+  endpoint: string,
+  tlsMode?: "auto" | "tls" | "insecure",
+): "insecure" | "tls" {
+  if (tlsMode === "tls") return "tls";
+  if (tlsMode === "insecure") return "insecure";
+  // "auto" or undefined — address-based heuristic
   const target = resolveGrpcTarget(endpoint).trim();
-  if (target.startsWith("unix:")) {
-    return "insecure";
-  }
-
+  if (target.startsWith("unix:")) return "insecure";
   const host = extractGrpcHost(target);
   return isLoopbackHost(host) ? "insecure" : "tls";
 }
 
-function resolveGrpcCredentials(endpoint: string): grpc.ChannelCredentials {
-  return resolveGrpcCredentialMode(endpoint) === "insecure"
-    ? grpc.credentials.createInsecure()
-    : grpc.credentials.createSsl();
+export function resolveGrpcCredentials(
+  endpoint: string,
+  tlsCaPath?: string,
+  tlsMode?: "auto" | "tls" | "insecure",
+): grpc.ChannelCredentials {
+  if (resolveGrpcCredentialMode(endpoint, tlsMode) === "insecure") {
+    return grpc.credentials.createInsecure();
+  }
+  if (tlsCaPath) {
+    let rootCerts: Buffer;
+    try {
+      rootCerts = fs.readFileSync(tlsCaPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `LibraVDB: failed to load TLS CA certificate from "${tlsCaPath}": ${msg}`,
+      );
+    }
+    return grpc.credentials.createSsl(rootCerts, null, null);
+  }
+  return grpc.credentials.createSsl();
 }
 
 function extractGrpcHost(target: string): string {
@@ -75,7 +111,7 @@ export class GrpcKernelClient {
 
     const target = resolveGrpcTarget(options.endpoint);
 
-    this.client = new kernelService(target, resolveGrpcCredentials(options.endpoint));
+    this.client = new kernelService(target, resolveGrpcCredentials(options.endpoint, options.tlsCaPath, options.tlsMode));
   }
 
   private getMetadata(signed = true): grpc.Metadata {

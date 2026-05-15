@@ -91,6 +91,12 @@ export interface PluginConfig {
   maxRetries?: number;
   logLevel?: "debug" | "info" | "warn" | "error";
   grpcEndpoint?: string;
+  grpcEndpointTlsCa?: string;  // path to CA cert PEM file for remote TLS verification
+  /** Controls gRPC credential mode.
+   * "auto" (default) — loopback and unix → plaintext, remote → TLS.
+   * "tls"            — always use TLS regardless of address.
+   * "insecure"       — always use plaintext (service mesh, tunnel). */
+  grpcEndpointTlsMode?: "auto" | "tls" | "insecure";
 }
 
 export interface SearchResult {

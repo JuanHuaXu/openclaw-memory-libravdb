@@ -9,6 +9,11 @@ export type RpcGetter = () => Promise<RpcClient>;
 export const DEFAULT_RPC_TIMEOUT_MS = 30000;
 export const STARTUP_HEALTH_TIMEOUT_MS = 2000;
 
+export const VALID_TLS_MODES = ["auto", "tls", "insecure"] as const;
+export type ValidTlsMode = typeof VALID_TLS_MODES[number];
+const isTlsModeValid = (m: string): m is ValidTlsMode =>
+  VALID_TLS_MODES.includes(m as ValidTlsMode);
+
 export function resolveStartupHealthTimeoutMs(cfg: PluginConfig): number {
   return Math.max(STARTUP_HEALTH_TIMEOUT_MS, cfg.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS);
 }
@@ -72,10 +77,31 @@ export function createPluginRuntime(
         if (cfg.grpcEndpoint) {
           try {
             const secret = loadSecretFromEnv();
+            if (
+              cfg.grpcEndpointTlsMode !== undefined &&
+              !isTlsModeValid(cfg.grpcEndpointTlsMode)
+            ) {
+              throw new Error(
+                `LibraVDB: invalid grpcEndpointTlsMode "${cfg.grpcEndpointTlsMode}" — ` +
+                `must be "auto", "tls", or "insecure"`,
+              );
+            }
+            if (
+              cfg.grpcEndpointTlsMode === "insecure" &&
+              cfg.grpcEndpointTlsCa
+            ) {
+              // logger is provided by the host and may not have all methods
+              logger.warn?.(
+                `LibraVDB: grpcEndpointTlsCa is set but grpcEndpointTlsMode ` +
+                `is "insecure" — the CA file will not be used`,
+              );
+            }
             kernel = new GrpcKernelClient({
               endpoint: cfg.grpcEndpoint,
               secret,
               timeoutMs: cfg.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS,
+              tlsCaPath: cfg.grpcEndpointTlsCa,
+              tlsMode: cfg.grpcEndpointTlsMode,
             });
           } catch (error) {
             logger.warn?.(`LibraVDB: failed to initialize gRPC kernel client: ${formatError(error)}`);
