@@ -192,8 +192,8 @@ export class RpcClient {
     try {
       const msg = RpcResponse.fromBinary(payload as Uint8Array);
 
-      if (typeof msg.id !== "bigint") {
-        this.socket.destroy(new Error("Protocol violation: expected bigint message id"));
+      if (typeof msg.id !== "bigint" || msg.id <= 0n) {
+        this.socket.destroy(new Error("Protocol violation: expected positive bigint message id"));
         return false;
       }
 

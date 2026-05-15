@@ -431,6 +431,16 @@ test("RpcClient rejects pending calls on malformed response frames", async () =>
   await assert.rejects(pending, /Protocol violation: malformed RPC response frame/);
 });
 
+test("RpcClient rejects pending calls on default response frames with id zero", async () => {
+  const socket = new FakeSocket();
+  const client = new RpcClient(socket, { timeoutMs: 100 });
+
+  const pending = client.call("health", {});
+  socket.emitData(frameServerPayload(new (RpcResponse as any)().toBinary()));
+
+  await assert.rejects(pending, /Protocol violation: expected positive bigint message id/);
+});
+
 test("RpcClient supports per-call timeout overrides", async () => {
   const socket = new FakeSocket();
   const client = new RpcClient(socket, { timeoutMs: 100 });
