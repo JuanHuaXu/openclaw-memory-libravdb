@@ -58,42 +58,7 @@ export function createPluginRuntime(
     }
     if (!started) {
       started = (async () => {
-        if (cfg.grpcEndpoint) {
-          if (
-            cfg.grpcEndpointTlsMode !== undefined &&
-            !isTlsModeValid(cfg.grpcEndpointTlsMode)
-          ) {
-            throw new Error(
-              `LibraVDB: invalid grpcEndpointTlsMode "${cfg.grpcEndpointTlsMode}" — ` +
-              `must be "auto", "tls", or "insecure"`,
-            );
-          }
-
-          const hasClientCert = cfg.grpcEndpointTlsClientCert !== undefined;
-          const hasClientKey = cfg.grpcEndpointTlsClientKey !== undefined;
-          if (hasClientCert !== hasClientKey) {
-            throw new Error(
-              "LibraVDB: grpcEndpointTlsClientCert and " +
-              "grpcEndpointTlsClientKey must both be set or both be omitted",
-            );
-          }
-
-          if (cfg.grpcEndpointTlsMode === "insecure") {
-            if (cfg.grpcEndpointTlsCa) {
-              logger.warn?.(
-                `LibraVDB: grpcEndpointTlsCa is set but grpcEndpointTlsMode ` +
-                `is "insecure" — the CA file will not be used`,
-              );
-            }
-            if (cfg.grpcEndpointTlsClientCert) {
-              logger.warn?.(
-                `LibraVDB: grpcEndpointTlsClientCert is set but ` +
-                `grpcEndpointTlsMode is "insecure" — client certificate ` +
-                `will not be sent`,
-              );
-            }
-          }
-        }
+        validateGrpcKernelConfig(cfg, logger);
 
         const sidecar = await startSidecar(cfg, logger);
         const rpc = new RpcClient(sidecar.socket, {
@@ -188,6 +153,46 @@ export function createPluginRuntime(
       }
     },
   };
+}
+
+export function validateGrpcKernelConfig(cfg: PluginConfig, logger: LoggerLike): void {
+  if (!cfg.grpcEndpoint) {
+    return;
+  }
+  if (
+    cfg.grpcEndpointTlsMode !== undefined &&
+    !isTlsModeValid(cfg.grpcEndpointTlsMode)
+  ) {
+    throw new Error(
+      `LibraVDB: invalid grpcEndpointTlsMode "${cfg.grpcEndpointTlsMode}" — ` +
+      `must be "auto", "tls", or "insecure"`,
+    );
+  }
+
+  const hasClientCert = cfg.grpcEndpointTlsClientCert !== undefined;
+  const hasClientKey = cfg.grpcEndpointTlsClientKey !== undefined;
+  if (hasClientCert !== hasClientKey) {
+    throw new Error(
+      "LibraVDB: grpcEndpointTlsClientCert and " +
+      "grpcEndpointTlsClientKey must both be set or both be omitted",
+    );
+  }
+
+  if (cfg.grpcEndpointTlsMode === "insecure") {
+    if (cfg.grpcEndpointTlsCa) {
+      logger.warn?.(
+        `LibraVDB: grpcEndpointTlsCa is set but grpcEndpointTlsMode ` +
+        `is "insecure" — the CA file will not be used`,
+      );
+    }
+    if (cfg.grpcEndpointTlsClientCert) {
+      logger.warn?.(
+        `LibraVDB: grpcEndpointTlsClientCert is set but ` +
+        `grpcEndpointTlsMode is "insecure" — client certificate ` +
+        `will not be sent`,
+      );
+    }
+  }
 }
 
 function loadSecretFromEnv(): string | undefined {
