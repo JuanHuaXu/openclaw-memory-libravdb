@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { enrichStartupError, resolveStartupHealthTimeoutMs } from "../../src/plugin-runtime.js";
+import { enrichStartupError, resolveStartupHealthTimeoutMs, validateGrpcKernelConfig } from "../../src/plugin-runtime.js";
 
 test("enrichStartupError adds provisioning guidance for daemon startup failures", () => {
   const err = enrichStartupError("LibraVDB daemon failed health check", "embedder running in deterministic fallback mode");
@@ -21,97 +21,82 @@ test("resolveStartupHealthTimeoutMs uses the normal RPC timeout when it is highe
   assert.equal(resolveStartupHealthTimeoutMs({ rpcTimeoutMs: 1000 }), 2000);
 });
 
-test("invalid grpcEndpointTlsMode throws with the bad value", async () => {
-  const { createPluginRuntime } = await import("../../src/plugin-runtime.js");
-  const runtime = createPluginRuntime({
-    grpcEndpoint: "tcp:127.0.0.1:50051",
-    grpcEndpointTlsMode: "mtls" as any,
-  });
-  await assert.rejects(
-    () => runtime.getKernel(),
+test("validateGrpcKernelConfig: invalid grpcEndpointTlsMode throws with the bad value", () => {
+  assert.throws(
+    () => validateGrpcKernelConfig({
+      grpcEndpoint: "tcp:127.0.0.1:50051",
+      grpcEndpointTlsMode: "mtls" as any,
+    }, console),
     /invalid grpcEndpointTlsMode.*mtls/,
   );
 });
 
-test("insecure mode with tlsCaPath logs warning about CA not being used", async () => {
-  const warnings: string[] = [];
-  const origWarn = console.warn;
-  console.warn = (...args: unknown[]) => {
-    const msg = args.join(" ");
-    if (msg.includes("grpcEndpointTlsCa") || msg.includes("insecure")) {
-      warnings.push(msg);
-    }
-  };
-  try {
-    const { createPluginRuntime } = await import("../../src/plugin-runtime.js");
-    const runtime = createPluginRuntime({
-      grpcEndpoint: "tcp:127.0.0.1:50051",
-      grpcEndpointTlsMode: "insecure",
-      grpcEndpointTlsCa: "/etc/certs/ca.pem",
-    });
-    try {
-      await runtime.getKernel();
-    } catch {
-      // gRPC init may fail — we only care about the warning
-    }
-    assert.equal(warnings.length, 1, "should have logged one CA/insecure warning");
-    assert.match(warnings[0], /grpcEndpointTlsCa/);
-    assert.match(warnings[0], /insecure/);
-  } finally {
-    console.warn = origWarn;
-  }
-});
-
-test("validation throws when grpcEndpointTlsClientCert is set but grpcEndpointTlsClientKey is omitted", async () => {
-  const { createPluginRuntime } = await import("../../src/plugin-runtime.js");
-  const runtime = createPluginRuntime({
+test("validateGrpcKernelConfig: omitted grpcEndpointTlsMode is valid for auto credential selection", () => {
+  assert.doesNotThrow(() => validateGrpcKernelConfig({
     grpcEndpoint: "tcp:127.0.0.1:50051",
-    grpcEndpointTlsClientCert: "/etc/certs/client.crt",
-  });
-  await assert.rejects(
-    () => runtime.getKernel(),
-    /grpcEndpointTlsClientCert and grpcEndpointTlsClientKey must both be set or both be omitted/,
-  );
+  }, console));
 });
 
-test("validation throws when grpcEndpointTlsClientKey is set but grpcEndpointTlsClientCert is omitted", async () => {
-  const { createPluginRuntime } = await import("../../src/plugin-runtime.js");
-  const runtime = createPluginRuntime({
-    grpcEndpoint: "tcp:127.0.0.1:50051",
-    grpcEndpointTlsClientKey: "/etc/certs/client.key",
-  });
-  await assert.rejects(
-    () => runtime.getKernel(),
-    /grpcEndpointTlsClientCert and grpcEndpointTlsClientKey must both be set or both be omitted/,
-  );
-});
-
-test("warning fires when grpcEndpointTlsClientCert is set and grpcEndpointTlsMode is 'insecure'", async () => {
+test("validateGrpcKernelConfig: insecure mode with tlsCaPath logs warning about CA not being used", () => {
   const warnings: string[] = [];
-  const origWarn = console.warn;
-  console.warn = (...args: unknown[]) => {
-    const msg = args.join(" ");
-    if (msg.includes("grpcEndpointTlsClientCert") || msg.includes("insecure")) {
-      warnings.push(msg);
-    }
+  const logger = {
+    error() {},
+    warn(message: string) {
+      warnings.push(message);
+    },
   };
-  try {
-    const { createPluginRuntime } = await import("../../src/plugin-runtime.js");
-    const runtime = createPluginRuntime({
+  validateGrpcKernelConfig({
+    grpcEndpoint: "tcp:127.0.0.1:50051",
+    grpcEndpointTlsMode: "insecure",
+    grpcEndpointTlsCa: "/etc/certs/ca.pem",
+  }, logger);
+  assert.equal(warnings.length, 1, "should have logged one CA/insecure warning");
+  assert.match(warnings[0], /grpcEndpointTlsCa/);
+  assert.match(warnings[0], /insecure/);
+});
+
+test("validateGrpcKernelConfig: throws when grpcEndpointTlsClientCert is set but grpcEndpointTlsClientKey is omitted", () => {
+  assert.throws(
+    () => validateGrpcKernelConfig({
       grpcEndpoint: "tcp:127.0.0.1:50051",
-      grpcEndpointTlsMode: "insecure",
       grpcEndpointTlsClientCert: "/etc/certs/client.crt",
+    }, console),
+    /grpcEndpointTlsClientCert and grpcEndpointTlsClientKey must both be set or both be omitted/,
+  );
+});
+
+test("validateGrpcKernelConfig: throws when grpcEndpointTlsClientKey is set but grpcEndpointTlsClientCert is omitted", () => {
+  assert.throws(
+    () => validateGrpcKernelConfig({
+      grpcEndpoint: "tcp:127.0.0.1:50051",
       grpcEndpointTlsClientKey: "/etc/certs/client.key",
-    });
-    try {
-      await runtime.getKernel();
-    } catch {
-      // gRPC init may fail — we only care about the warning
-    }
-    assert.equal(warnings.length, 1, "should have logged one client cert/insecure warning");
-    assert.match(warnings[0], /grpcEndpointTlsClientCert/);
-    assert.match(warnings[0], /insecure/);
-  } finally {
-    console.warn = origWarn;
-  }
+    }, console),
+    /grpcEndpointTlsClientCert and grpcEndpointTlsClientKey must both be set or both be omitted/,
+  );
+});
+
+test("validateGrpcKernelConfig: warning fires when grpcEndpointTlsClientCert is set and grpcEndpointTlsMode is 'insecure'", () => {
+  const warnings: string[] = [];
+  const logger = {
+    error() {},
+    warn(message: string) {
+      warnings.push(message);
+    },
+  };
+  validateGrpcKernelConfig({
+    grpcEndpoint: "tcp:127.0.0.1:50051",
+    grpcEndpointTlsMode: "insecure",
+    grpcEndpointTlsClientCert: "/etc/certs/client.crt",
+    grpcEndpointTlsClientKey: "/etc/certs/client.key",
+  }, logger);
+  assert.equal(warnings.length, 1, "should have logged one client cert/insecure warning");
+  assert.match(warnings[0], /grpcEndpointTlsClientCert/);
+  assert.match(warnings[0], /insecure/);
+});
+
+test("validateGrpcKernelConfig: returns early when grpcEndpoint is not set", () => {
+  assert.doesNotThrow(() => validateGrpcKernelConfig({
+    grpcEndpointTlsMode: "insecure",
+    grpcEndpointTlsCa: "/etc/certs/ca.pem",
+  }, console));
 });
