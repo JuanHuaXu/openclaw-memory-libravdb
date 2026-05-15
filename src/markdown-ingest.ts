@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 
 import type { LoggerLike, PluginConfig } from "./types.js";
-import { hashBytes } from "./markdown-hash.js";
 import { formatError } from "./format-error.js";
 import { IngestQueue } from "./ingest-queue.js";
 
@@ -12,6 +11,7 @@ const DEFAULT_DEBOUNCE_MS = 150;
 const DEFAULT_TOKENIZER_ID = "markdown-ingest:v1";
 const MARKDOWN_INGEST_VERSION = 3;
 const HASH_BACKEND = "wasm-fnv1a64";
+const STREAM_CHUNK_BYTES = 64 * 1024;
 type Disposable = { close(): void };
 
 interface RpcLike {
@@ -79,6 +79,11 @@ interface GenericMarkdownSourceConfig {
   exclude?: string[];
   debounceMs?: number;
   snapshotPath?: string;
+  priorityMode?: "mtime" | "ctime" | "size" | "fifo";
+  tokenBudgetPerScan?: number;
+  smallFileThreshold?: number;
+  largeFileThreshold?: number;
+  maxTokensPerFile?: number;
 }
 
 interface ScanStats {
@@ -91,9 +96,19 @@ interface ScanStats {
   filesIngested: number;
   filesDeleted: number;
   syncErrors: number;
+  filesDeferred: number;
+}
+
+interface FileCandidate {
+  path: string;
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  ordinal: number;
 }
 
 type SyncMarkdownResult = "ingested" | "unchanged" | "deleted" | "skipped";
+type StreamReadResult = { text: string; fileHash: string } | "too_large" | null;
 
 interface MarkdownSnapshotFile {
   version: number;
@@ -142,6 +157,11 @@ export function createMarkdownIngestionHandle(
           exclude: cfg.markdownIngestionExclude,
           debounceMs: cfg.markdownIngestionDebounceMs ?? DEFAULT_DEBOUNCE_MS,
           snapshotPath: resolveMarkdownSnapshotPath("generic", cfg.markdownIngestionSnapshotPath),
+          priorityMode: cfg.markdownIngestionPriorityMode,
+          tokenBudgetPerScan: cfg.markdownIngestionTokenBudgetPerScan,
+          smallFileThreshold: cfg.markdownIngestionSmallFileThreshold,
+          largeFileThreshold: cfg.markdownIngestionLargeFileThreshold,
+          maxTokensPerFile: cfg.markdownIngestionMaxTokensPerFile,
         },
         getRpc,
         logger,
@@ -161,6 +181,11 @@ export function createMarkdownIngestionHandle(
           exclude: cfg.markdownIngestionObsidianExclude,
           debounceMs: cfg.markdownIngestionObsidianDebounceMs ?? cfg.markdownIngestionDebounceMs ?? DEFAULT_DEBOUNCE_MS,
           snapshotPath: resolveMarkdownSnapshotPath("obsidian", cfg.markdownIngestionObsidianSnapshotPath),
+          priorityMode: cfg.markdownIngestionPriorityMode,
+          tokenBudgetPerScan: cfg.markdownIngestionTokenBudgetPerScan,
+          smallFileThreshold: cfg.markdownIngestionSmallFileThreshold,
+          largeFileThreshold: cfg.markdownIngestionLargeFileThreshold,
+          maxTokensPerFile: cfg.markdownIngestionMaxTokensPerFile,
         },
         getRpc,
         logger,
@@ -219,6 +244,11 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
   private readonly getRpc: RpcGetterLike;
   private readonly logger: LoggerLike;
   private readonly snapshotPath: string;
+  private readonly priorityMode: "mtime" | "ctime" | "size" | "fifo";
+  private readonly tokenBudgetPerScan: number;
+  private readonly smallFileThreshold: number;
+  private readonly largeFileThreshold: number;
+  private readonly maxTokensPerFile: number;
   private readonly states = new Map<string, RootState>();
   private readonly fileStates = new Map<string, FileState>();
   private readonly activeScans = new Set<Promise<void>>();
@@ -240,6 +270,11 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
     this.getRpc = getRpc;
     this.logger = logger;
     this.snapshotPath = config.snapshotPath ?? resolveMarkdownSnapshotPath(kind);
+    this.priorityMode = config.priorityMode ?? "mtime";
+    this.tokenBudgetPerScan = Math.max(0, Math.trunc(config.tokenBudgetPerScan ?? 8192));
+    this.smallFileThreshold = Math.max(1, Math.trunc(config.smallFileThreshold ?? 10 * 1024));
+    this.largeFileThreshold = Math.max(this.smallFileThreshold + 1, Math.trunc(config.largeFileThreshold ?? 100 * 1024));
+    this.maxTokensPerFile = Math.max(1, Math.trunc(config.maxTokensPerFile ?? 128_000));
     this.tokenizerId = DEFAULT_TOKENIZER_ID;
     this.coreDoc = true;
   }
@@ -317,12 +352,14 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
 
     rootState.scanState.scanning = true;
     const scan = (async () => {
-      const stats = createScanStats();
-      const startedAt = Date.now();
-      try {
-        const currentFiles = new Set<string>();
-        await this.walkDirectory(rootState, rootState.root, currentFiles, stats);
-        if (!this.stopping) {
+        const stats = createScanStats();
+        const startedAt = Date.now();
+        try {
+          const currentFiles = new Set<string>();
+          const candidates: FileCandidate[] = [];
+          await this.walkDirectory(rootState, rootState.root, currentFiles, stats, candidates);
+          await this.syncCandidates(rootState, candidates, stats);
+          if (!this.stopping) {
           await this.pruneDeletedFiles(rootState, currentFiles, stats);
           rootState.knownFiles = currentFiles;
           await this.saveSnapshotIfDirty();
@@ -366,7 +403,13 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
     }, this.debounceMs);
   }
 
-  private async walkDirectory(rootState: RootState, dir: string, currentFiles: Set<string>, stats: ScanStats): Promise<void> {
+  private async walkDirectory(
+    rootState: RootState,
+    dir: string,
+    currentFiles: Set<string>,
+    stats: ScanStats,
+    candidates: FileCandidate[],
+  ): Promise<void> {
     if (this.shouldPruneDirectory(rootState.root, dir)) {
       stats.directoriesPruned++;
       return;
@@ -392,7 +435,7 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
       }
       const child = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        await this.walkDirectory(rootState, child, currentFiles, stats);
+        await this.walkDirectory(rootState, child, currentFiles, stats, candidates);
         continue;
       }
       if (!entry.isFile() || !isMarkdownFile(entry.name)) {
@@ -405,13 +448,49 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
       }
       stats.filesIncluded++;
       currentFiles.add(child);
+      const stat = await this.safeStatWithCtime(child);
+      if (!stat) {
+        continue;
+      }
+      candidates.push({ path: child, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, ordinal: candidates.length });
+    }
+  }
+
+  private async syncCandidates(rootState: RootState, candidates: FileCandidate[], stats: ScanStats): Promise<void> {
+    const sorted = sortCandidates(candidates, this.priorityMode);
+    let remainingTokens = this.tokenBudgetPerScan > 0 ? this.tokenBudgetPerScan : Number.POSITIVE_INFINITY;
+    const tiers = { small: 0, medium: 0, large: 0 };
+    for (const candidate of sorted) {
+      if (this.stopping) {
+        return;
+      }
+      const estimatedTokens = estimateTokens(candidate.size);
+      if (estimatedTokens > this.maxTokensPerFile) {
+        stats.filesDeferred++;
+        continue;
+      }
+      if (estimatedTokens > remainingTokens) {
+        stats.filesDeferred++;
+        this.scheduleRootScan(rootState);
+        break;
+      }
+      if (!allowTier(candidate.size, this.smallFileThreshold, this.largeFileThreshold, tiers)) {
+        stats.filesDeferred++;
+        continue;
+      }
       try {
-        const result = await this.syncMarkdownFile(rootState, child);
+        const result = await this.syncMarkdownFile(rootState, candidate.path, {
+          size: candidate.size,
+          mtimeMs: candidate.mtimeMs,
+        });
         recordSyncResult(stats, result);
+        if (result === "ingested") {
+          remainingTokens -= estimatedTokens;
+        }
       } catch (error) {
         stats.syncErrors++;
         if (!this.stopping) {
-          this.logger.warn?.(`[markdown-ingest] sync failed for ${child}: ${formatError(error)}`);
+          this.logger.warn?.(`[markdown-ingest] sync failed for ${candidate.path}: ${formatError(error)}`);
         }
       }
     }
@@ -491,10 +570,14 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
     }
   }
 
-  private async syncMarkdownFile(rootState: RootState, filePath: string): Promise<SyncMarkdownResult> {
+  private async syncMarkdownFile(
+    rootState: RootState,
+    filePath: string,
+    initialStat?: { size: number; mtimeMs: number },
+  ): Promise<SyncMarkdownResult> {
     const sourceDoc = filePath;
     const relativePath = toPosixPath(path.relative(rootState.root, filePath));
-    const stat = await this.safeStat(filePath);
+    const stat = initialStat ?? (await this.safeStat(filePath));
     if (!stat) {
       await this.deleteSourceDocument(sourceDoc);
       this.fileStates.delete(sourceDoc);
@@ -507,15 +590,19 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
       return "unchanged";
     }
 
-    const bytes = await this.safeReadFile(filePath);
-    if (!bytes) {
+    const maxBytes = this.maxTokensPerFile * 4 + 3;
+    const streamed = await this.safeReadFileStreamed(filePath, maxBytes);
+    if (streamed === "too_large") {
+      return "skipped";
+    }
+    if (!streamed) {
       await this.deleteSourceDocument(sourceDoc);
       this.fileStates.delete(sourceDoc);
       this.snapshotDirty = true;
       return "deleted";
     }
 
-    const fileHash = hashBytes(bytes);
+    const { text, fileHash } = streamed;
     if (cached && cached.fileHash === fileHash) {
       this.setFileState(sourceDoc, {
         root: rootState.root,
@@ -528,7 +615,6 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
       return "unchanged";
     }
 
-    const text = textDecoder.decode(bytes);
     if (this.kind === "obsidian" && this.includePatterns.length === 0 && !looksLikeObsidianNote(filePath, text)) {
       await this.deleteSourceDocument(sourceDoc);
       this.fileStates.delete(sourceDoc);
@@ -603,11 +689,49 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
     }
   }
 
-  private async safeReadFile(filePath: string): Promise<Uint8Array | null> {
+  private async safeStatWithCtime(filePath: string): Promise<{ size: number; mtimeMs: number; ctimeMs: number } | null> {
     try {
-      return await this.fsApi.readFile(filePath);
+      const stat = await fsp.stat(filePath);
+      return { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs };
     } catch {
       return null;
+    }
+  }
+
+  private async safeReadFileStreamed(filePath: string, maxBytes: number): Promise<StreamReadResult> {
+    let handle: fsp.FileHandle | null = null;
+    try {
+      handle = await fsp.open(filePath, "r");
+      const decoder = new TextDecoder();
+      const chunks: string[] = [];
+      let hash = 0xcbf29ce484222325n;
+      let total = 0;
+      const buffer = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+
+      while (true) {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) {
+          break;
+        }
+        total += bytesRead;
+        if (total > maxBytes) {
+          return "too_large";
+        }
+        const chunk = buffer.subarray(0, bytesRead);
+        hash = updateFnv1a64(hash, chunk);
+        chunks.push(decoder.decode(chunk, { stream: true }));
+      }
+      chunks.push(decoder.decode());
+      return {
+        text: chunks.join(""),
+        fileHash: hash.toString(16).padStart(16, "0"),
+      };
+    } catch {
+      return null;
+    } finally {
+      if (handle) {
+        await handle.close().catch(() => {});
+      }
     }
   }
 
@@ -676,7 +800,7 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
 
   private logScanStats(root: string, stats: ScanStats, durationMs: number): void {
     this.logger.info?.(
-      `[markdown-ingest] ${this.kind} scan complete root=${root} dirs=${stats.directoriesScanned} prunedDirs=${stats.directoriesPruned} markdown=${stats.markdownFilesSeen} included=${stats.filesIncluded} skipped=${stats.filesSkipped} unchanged=${stats.filesUnchanged} ingested=${stats.filesIngested} deleted=${stats.filesDeleted} errors=${stats.syncErrors} durationMs=${durationMs}`,
+      `[markdown-ingest] ${this.kind} scan complete root=${root} dirs=${stats.directoriesScanned} prunedDirs=${stats.directoriesPruned} markdown=${stats.markdownFilesSeen} included=${stats.filesIncluded} skipped=${stats.filesSkipped} unchanged=${stats.filesUnchanged} ingested=${stats.filesIngested} deleted=${stats.filesDeleted} deferred=${stats.filesDeferred} errors=${stats.syncErrors} durationMs=${durationMs}`,
     );
   }
 }
@@ -692,7 +816,54 @@ function createScanStats(): ScanStats {
     filesIngested: 0,
     filesDeleted: 0,
     syncErrors: 0,
+    filesDeferred: 0,
   };
+}
+
+function estimateTokens(size: number): number {
+  return Math.max(1, Math.floor(size / 4));
+}
+
+function sortCandidates(candidates: FileCandidate[], mode: "mtime" | "ctime" | "size" | "fifo"): FileCandidate[] {
+  return [...candidates].sort((left, right) => {
+    if (mode === "size") {
+      return right.size - left.size || left.ordinal - right.ordinal;
+    }
+    if (mode === "ctime") {
+      return right.ctimeMs - left.ctimeMs || left.ordinal - right.ordinal;
+    }
+    if (mode === "fifo") {
+      return left.ordinal - right.ordinal;
+    }
+    return right.mtimeMs - left.mtimeMs || left.ordinal - right.ordinal;
+  });
+}
+
+function allowTier(
+  size: number,
+  smallThreshold: number,
+  largeThreshold: number,
+  tiers: { small: number; medium: number; large: number },
+): boolean {
+  if (size < smallThreshold) {
+    if (tiers.small >= 16) {
+      return false;
+    }
+    tiers.small++;
+    return true;
+  }
+  if (size > largeThreshold) {
+    if (tiers.large >= 1) {
+      return false;
+    }
+    tiers.large++;
+    return true;
+  }
+  if (tiers.medium >= 4) {
+    return false;
+  }
+  tiers.medium++;
+  return true;
 }
 
 function recordSyncResult(stats: ScanStats, result: SyncMarkdownResult): void {
@@ -711,8 +882,6 @@ function toPosixPath(value: string): string {
   return value.split(path.sep).join("/");
 }
 
-const textDecoder = new TextDecoder();
-
 function normalizeMarkdownRoots(roots?: string[]): string[] {
   if (!roots?.length) {
     return [];
@@ -726,6 +895,16 @@ function normalizeMarkdownRoots(roots?: string[]): string[] {
     resolved.add(path.resolve(trimmed));
   }
   return [...resolved];
+}
+
+function updateFnv1a64(seed: bigint, bytes: Uint8Array): bigint {
+  let hash = seed;
+  const prime = 0x100000001b3n;
+  for (let i = 0; i < bytes.length; i++) {
+    hash ^= BigInt(bytes[i] ?? 0);
+    hash = BigInt.asUintN(64, hash * prime);
+  }
+  return hash;
 }
 
 function resolveMarkdownSnapshotPath(kind: string, configuredPath?: string): string {

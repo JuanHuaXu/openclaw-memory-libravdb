@@ -574,3 +574,107 @@ test("markdown ingestion persists snapshots across adapter restarts", async () =
 
   await secondHandle.stop();
 });
+
+test("markdown ingestion startup processes newest files first in mtime mode", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-priority-"));
+  const oldestPath = path.join(tempRoot, "old.md");
+  const newestPath = path.join(tempRoot, "new.md");
+  await fsp.writeFile(oldestPath, "# Old\n\noldest");
+  await delay(10);
+  await fsp.writeFile(newestPath, "# New\n\nnewest");
+
+  const rpc = new FakeRpcClient();
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+      markdownIngestionPriorityMode: "mtime",
+    },
+    async () => rpc,
+    { error() {}, warn() {}, info() {} },
+  );
+
+  await handle.start();
+
+  const ingestCalls = rpc.calls.filter((call) => call.method === "ingest_markdown_document");
+  assert.equal(ingestCalls.length, 2);
+  assert.equal((ingestCalls[0].params as { sourceDoc: string }).sourceDoc, newestPath);
+  assert.equal((ingestCalls[1].params as { sourceDoc: string }).sourceDoc, oldestPath);
+
+  await handle.stop();
+});
+
+test("markdown ingestion startup defers oversized files and stops when scan token budget is depleted", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-budget-"));
+  const smallPath = path.join(tempRoot, "small.md");
+  const mediumPath = path.join(tempRoot, "medium.md");
+  const oversizedPath = path.join(tempRoot, "oversized.md");
+  await fsp.writeFile(smallPath, "# Small\n\nok");
+  await fsp.writeFile(mediumPath, "# Medium\n\n" + "m".repeat(320));
+  await fsp.writeFile(oversizedPath, "# Oversized\n\n" + "x".repeat(1200));
+
+  const rpc = new FakeRpcClient();
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+      markdownIngestionPriorityMode: "fifo",
+      markdownIngestionTokenBudgetPerScan: 50,
+      markdownIngestionMaxTokensPerFile: 200,
+    },
+    async () => rpc,
+    { error() {}, warn() {}, info() {} },
+  );
+
+  try {
+    await handle.start();
+
+    const ingested = rpc.calls
+      .filter((call) => call.method === "ingest_markdown_document")
+      .map((call) => (call.params as { sourceDoc: string }).sourceDoc);
+    assert.equal(ingested.includes(smallPath), true);
+    assert.equal(ingested.includes(mediumPath), false);
+    assert.equal(ingested.includes(oversizedPath), false);
+  } finally {
+    await handle.stop();
+  }
+});
+
+test("markdown ingestion startup streams reads without fsApi.readFile dependency", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-stream-"));
+  const filePath = path.join(tempRoot, "stream.md");
+  await fsp.writeFile(filePath, "# Stream\n\n" + "s".repeat(5000));
+
+  const rpc = new FakeRpcClient();
+  const fsBase = new FakeFsApi();
+  const fsApi = {
+    readdir: fsBase.readdir.bind(fsBase),
+    stat: fsBase.stat.bind(fsBase),
+    watch: fsBase.watch.bind(fsBase),
+    readFile: async (_file: string) => {
+      throw new Error("readFile should not be called when streaming ingest is enabled");
+    },
+  };
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+    },
+    async () => rpc,
+    { error() {}, warn() {}, info() {} },
+    fsApi as never,
+  );
+
+  try {
+    await handle.start();
+    assert.equal(rpc.calls.filter((call) => call.method === "ingest_markdown_document").length, 1);
+  } finally {
+    await handle.stop();
+  }
+});
