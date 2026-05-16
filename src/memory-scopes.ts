@@ -2,6 +2,10 @@ const SESSION_KEY_NAMESPACE_PREFIX = "session-key:";
 const AGENT_ID_NAMESPACE_PREFIX = "agent-id:";
 const USER_COLLECTION_PREFIX = "user:";
 
+/** Reserved prefixes that must not appear in an explicit userId,
+ *  to prevent namespace collision with auto-derived namespaces. */
+const RESERVED_NAMESPACE_PREFIXES = [SESSION_KEY_NAMESPACE_PREFIX, AGENT_ID_NAMESPACE_PREFIX, USER_COLLECTION_PREFIX] as const;
+
 /** Valid collection names: alphanumeric, underscores, hyphens, dots, colons, at-signs, hashes.
  *  Must start with a letter. Max 128 characters. */
 const COLLECTION_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_.:@#-]{0,127}$/;
@@ -34,7 +38,16 @@ export function resolveDurableNamespace(params: {
   fallback?: string;
 }): string {
   const explicitUserId = firstNonEmpty(params.userId);
-  if (explicitUserId) return validateNamespace(explicitUserId);
+  if (explicitUserId) {
+    for (const prefix of RESERVED_NAMESPACE_PREFIXES) {
+      if (explicitUserId.startsWith(prefix)) {
+        throw new Error(
+          `Invalid userId "${explicitUserId}": must not start with reserved prefix "${prefix}"`,
+        );
+      }
+    }
+    return validateNamespace(explicitUserId);
+  }
 
   const sessionKey = firstNonEmpty(params.sessionKey);
   if (sessionKey) return validateNamespace(`${SESSION_KEY_NAMESPACE_PREFIX}${sessionKey}`);
