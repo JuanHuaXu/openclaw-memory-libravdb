@@ -1060,6 +1060,20 @@ test("resolveIdentity with noAutoPersist skips writing identity file", () => {
   }
 });
 
+test("resolveIdentity creates identity file with owner-only permissions", () => {
+  const tmpDir = `/tmp/libravdb-test-identity-perms-${process.pid}`;
+  const identityPath = `${tmpDir}/libravdb-identity.json`;
+  try {
+    resolveIdentity({ identityPath });
+    assert.ok(fs.existsSync(identityPath), "identity file should exist");
+    const stat = fs.statSync(identityPath);
+    const mode = stat.mode & 0o777;
+    assert.equal(mode & 0o077, 0, `identity file should not be group/world readable, got ${mode.toString(8)}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("context engine exact recall escapes control characters inside injected memory facts", async () => {
   const rpc = new FakeRpc();
   const marker = "CONTROL_CHAR_MEMORY_MARKER_1234567890";

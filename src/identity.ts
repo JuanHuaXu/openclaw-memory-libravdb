@@ -96,7 +96,7 @@ function writeIdentityFile(path: string, userId: string, parts: DerivedParts): v
   mkdirSync(dir, { recursive: true });
 
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-  writeFileSync(tmp, JSON.stringify(identity, null, 2) + "\n");
+  writeFileSync(tmp, JSON.stringify(identity, null, 2) + "\n", { mode: 0o600 });
   renameSync(tmp, path);
 }
 
