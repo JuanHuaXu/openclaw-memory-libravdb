@@ -32,6 +32,58 @@ test("dream promotion parser only accepts explicit deep-sleep candidate bullets"
   assert.equal(candidates[1]?.text, "too weak to promote");
 });
 
+test("dream promotion parser accepts explicit promotion candidate headings", () => {
+  const candidates = parseDreamPromotionCandidates(
+    [
+      "## Dream Promotion Candidates",
+      "- Keep dream promotion {score=0.82 recall=3 unique=2}",
+      "",
+      "## Promotion Candidates",
+      "- Keep promotion candidate {score=0.83 recall=4 unique=3}",
+      "",
+      "## Promote Candidates",
+      "- Keep promote candidate {score=0.84 recall=5 unique=4}",
+    ].join("\n"),
+  );
+
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.text),
+    ["Keep dream promotion", "Keep promotion candidate", "Keep promote candidate"],
+  );
+});
+
+test("dream promotion parser rejects substring-only section matches", () => {
+  const candidates = parseDreamPromotionCandidates(
+    [
+      "## Daydreaming",
+      "- Ignore daydreaming {score=0.9 recall=3 unique=2}",
+      "",
+      "## Dream Team",
+      "- Ignore dream team {score=0.9 recall=3 unique=2}",
+      "",
+      "## Dreaming of Refactors",
+      "- Ignore dreaming heading {score=0.9 recall=3 unique=2}",
+      "",
+      "## Promotional Content",
+      "- Ignore promotional content {score=0.9 recall=3 unique=2}",
+      "",
+      "## Promote Your Work",
+      "- Ignore promote your work {score=0.9 recall=3 unique=2}",
+      "",
+      "## Deep Sleepwalking",
+      "- Ignore deep sleepwalking {score=0.9 recall=3 unique=2}",
+      "",
+      "## Deep Sleep",
+      "- Keep explicit deep sleep {score=0.9 recall=3 unique=2}",
+    ].join("\n"),
+  );
+
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.text),
+    ["Keep explicit deep sleep"],
+  );
+});
+
 test("dream promotion parser rejects partially parsed numeric metadata", () => {
   const candidates = parseDreamPromotionCandidates(
     [
