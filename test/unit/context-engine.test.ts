@@ -523,15 +523,15 @@ test("context engine assemble clamps system prompt additions within token budget
   });
 
   assert.equal(assembled.messages.length, 0);
-  assert.equal(assembled.systemPromptAddition, "x".repeat(176));
-  assert.ok(assembled.estimatedTokens <= 44);
+  assert.equal(assembled.systemPromptAddition, "x".repeat(960));
+  assert.ok(assembled.estimatedTokens <= 240);
 });
 
 test("context engine assemble trims messages against remaining budget after system prompt additions", async () => {
   const rpc = new FakeRpc();
   rpc.assembleResponse = {
     messages: [
-      { role: "assistant", content: "y".repeat(200) },
+      { role: "assistant", content: "y".repeat(1000) },
     ],
     estimatedTokens: 0,
     systemPromptAddition: "x".repeat(100),
@@ -552,8 +552,8 @@ test("context engine assemble trims messages against remaining budget after syst
 
   assert.equal(assembled.systemPromptAddition, "x".repeat(100));
   assert.equal(assembled.messages.length, 1);
-  assert.ok(String(assembled.messages[0]!.content).length < 200);
-  assert.ok(assembled.estimatedTokens <= 44);
+  assert.ok(String(assembled.messages[0]!.content).length < 1000);
+  assert.ok(assembled.estimatedTokens <= 240);
 });
 
 test("context engine assemble drops messages when system prompt leaves no wrapper budget", async () => {
@@ -576,12 +576,40 @@ test("context engine assemble drops messages when system prompt leaves no wrappe
     sessionKey: "sk1",
     messages: [makeMessage("user", "assemble with nearly full system addition")],
     prompt: "assemble with nearly full system addition",
-    tokenBudget: 300,
+    tokenBudget: 60,
   });
 
   assert.equal(assembled.systemPromptAddition, "x".repeat(172));
   assert.equal(assembled.messages.length, 0);
-  assert.ok(assembled.estimatedTokens <= 44);
+  assert.ok(assembled.estimatedTokens <= 48);
+});
+
+test("context engine assemble preserves useful context for small token budgets", async () => {
+  const rpc = new FakeRpc();
+  rpc.assembleResponse = {
+    messages: [
+      { role: "assistant", content: "small remembered context" },
+    ],
+    estimatedTokens: 500,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(rpc), { userId: "fixed-user" }, {
+    error() {},
+    info() {},
+    warn() {},
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "assemble with small budget")],
+    prompt: "assemble with small budget",
+    tokenBudget: 100,
+  });
+
+  assert.equal(assembled.messages.length, 1);
+  assert.equal(assembled.messages[0]!.content, "small remembered context");
+  assert.ok(assembled.estimatedTokens <= 80);
 });
 
 test("context engine exact recall skips additions that would exceed the token budget", async () => {
@@ -612,7 +640,7 @@ test("context engine exact recall skips additions that would exceed the token bu
     sessionKey: "sk1",
     messages: [makeMessage("user", `What does ${marker} mean?`)],
     prompt: `What does ${marker} mean?`,
-    tokenBudget: 300,
+    tokenBudget: 60,
   });
 
   assert.equal(assembled.systemPromptAddition, "");

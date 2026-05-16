@@ -37,6 +37,7 @@ type OpenClawCompatibleAssembleResult = {
 
 const APPROX_CHARS_PER_TOKEN = 4;
 const ASSEMBLE_BUDGET_HEADROOM_TOKENS = 256;
+const ASSEMBLE_BUDGET_HEADROOM_FRACTION = 0.2;
 const DEFAULT_COMPACTION_THRESHOLD_FRACTION = 0.8;
 const STRUCTURED_MARKER_RE = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){2,}_\d{6,}\b/g;
 const DISTINCTIVE_IDENTIFIER_RE = /\b([A-Za-z][A-Za-z0-9]*(?:[_-][A-Za-z0-9]+){1,})\b/g;
@@ -216,7 +217,9 @@ function normalizeTokenBudget(tokenBudget: number | undefined): number | undefin
 
 function resolveEffectiveAssembleBudget(tokenBudget: number | undefined): number {
   const normalized = normalizeTokenBudget(tokenBudget) ?? 1;
-  return Math.max(1, normalized - ASSEMBLE_BUDGET_HEADROOM_TOKENS);
+  const proportionalHeadroom = Math.max(1, Math.floor(normalized * ASSEMBLE_BUDGET_HEADROOM_FRACTION));
+  const headroom = Math.min(ASSEMBLE_BUDGET_HEADROOM_TOKENS, proportionalHeadroom);
+  return Math.max(1, normalized - headroom);
 }
 
 function normalizeThresholdFraction(fraction: number | undefined): number {
