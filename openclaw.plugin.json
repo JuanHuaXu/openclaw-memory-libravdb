@@ -263,6 +263,20 @@
         "type": "number",
         "default": 150
       },
+      "markdownIngestionPriorityMode": {
+        "type": "string",
+        "enum": [
+          "mtime",
+          "ctime",
+          "size",
+          "fifo"
+        ],
+        "default": "mtime"
+      },
+      "markdownIngestionMaxTokensPerFile": {
+        "type": "number",
+        "default": 128000
+      },
       "markdownIngestionSnapshotPath": {
         "type": "string"
       },

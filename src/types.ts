@@ -49,6 +49,8 @@ export interface PluginConfig {
   markdownIngestionInclude?: string[];
   markdownIngestionExclude?: string[];
   markdownIngestionDebounceMs?: number;
+  markdownIngestionPriorityMode?: "mtime" | "ctime" | "size" | "fifo";
+  markdownIngestionMaxTokensPerFile?: number;
   markdownIngestionSnapshotPath?: string;
   markdownIngestionObsidianSnapshotPath?: string;
   dreamPromotionEnabled?: boolean;

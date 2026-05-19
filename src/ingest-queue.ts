@@ -8,6 +8,8 @@ export interface IngestQueueOptions {
   retryBaseDelayMs: number;
   /** Max retries per chunk. */
   maxRetries: number;
+  /** Called after each chunk is accepted so scan-level state stays current. */
+  onChunkFeedback?: (feedback: IngestFeedback) => void;
 }
 
 const DEFAULT_OPTIONS: IngestQueueOptions = {
@@ -15,13 +17,6 @@ const DEFAULT_OPTIONS: IngestQueueOptions = {
   retryBaseDelayMs: 500,
   maxRetries: 4,
 };
-
-interface QueuedIngest {
-  sourceDoc: string;
-  params: IngestMarkdownDocumentParams;
-  resolve: () => void;
-  reject: (err: Error) => void;
-}
 
 interface IngestMarkdownDocumentParams {
   sourceDoc: string;
@@ -35,10 +30,37 @@ interface IngestMarkdownDocumentParams {
     fileHash: string;
     sourceSize: number;
     sourceMtimeMs: number;
+    sourceCtimeMs: number;
     ingestVersion: number;
     hashBackend: string;
   };
   mode?: IngestMode;
+}
+
+interface IngestFeedback {
+  queueDepth: number;
+  queueCapacity: number;
+  acceptMore: boolean;
+  retryAfterMs: number;
+  processingTimeUs: number;
+  nodesAccepted: number;
+  nodesRejected: number;
+  tokensIngested: number;
+  tokenBurstLimit: number;
+  walDepth?: number;
+  walCapacity?: number;
+}
+
+interface IngestMarkdownDocumentResponse {
+  ok: boolean;
+  feedback?: IngestFeedback;
+}
+
+interface QueuedIngest {
+  sourceDoc: string;
+  params: IngestMarkdownDocumentParams;
+  resolve: () => void;
+  reject: (err: Error) => void;
 }
 
 export class IngestQueue {
@@ -66,44 +88,76 @@ export class IngestQueue {
     sourceDoc: string,
     text: string,
     baseParams: Omit<IngestMarkdownDocumentParams, "sourceDoc" | "text" | "mode">,
-  ): Promise<void> {
+    maxChunkTokens?: number,
+  ): Promise<IngestFeedback | undefined> {
     if (this.options.chunkTokens === Infinity) {
-      // Retry-only mode: send full text as single chunk
-      return this.ingestWithRetry({
+      const resp = await this.ingestWithRetry({
         ...baseParams,
         sourceDoc,
         text,
         mode: IngestMode.REPLACE,
       });
+      return resp.feedback;
     }
 
-    const chunks = splitIntoChunks(text, this.options.chunkTokens);
-    if (chunks.length === 1) {
-      return this.ingestWithRetry({
-        ...baseParams,
-        sourceDoc,
-        text: chunks[0].text,
-        mode: IngestMode.REPLACE,
-      });
-    }
+    let currentLimit = maxChunkTokens && maxChunkTokens > 0 ? maxChunkTokens : this.options.chunkTokens;
+    let offset = 0;
+    let isFirst = true;
+    let lastFeedback: IngestFeedback | undefined;
 
-    // Multiple chunks: clear the source once, then append the remaining chunks.
-    // Sending REPLACE last deletes the earlier chunks from the same source_doc.
-    for (let i = 0; i < chunks.length; i++) {
-      const isFirst = i === 0;
+    while (offset < text.length) {
+      const remainingText = text.slice(offset);
+      const chunks = splitIntoChunks(remainingText, currentLimit);
+      const chunkText = chunks[0].text;
+
       const chunkParams: IngestMarkdownDocumentParams = {
         ...baseParams,
         sourceDoc,
-        text: chunks[i].text,
+        text: chunkText,
         mode: isFirst ? IngestMode.REPLACE : IngestMode.APPEND,
       };
-      await this.ingestWithRetry(chunkParams);
+
+      const resp = await this.ingestWithRetry(chunkParams);
+      lastFeedback = resp.feedback;
+
+      if (
+        lastFeedback &&
+        lastFeedback.nodesAccepted === 0 &&
+        lastFeedback.tokenBurstLimit &&
+        lastFeedback.tokenBurstLimit > 0 &&
+        lastFeedback.tokenBurstLimit < currentLimit
+      ) {
+        currentLimit = lastFeedback.tokenBurstLimit;
+        continue;
+      }
+
+      if (lastFeedback && lastFeedback.nodesAccepted === 0) {
+        this.logger.warn?.(
+          `[ingest-queue] Chunk permanently rejected for ${sourceDoc} ` +
+          `at offset=${offset} length=${chunkText.length} ` +
+          `tokenBurstLimit=${lastFeedback.tokenBurstLimit ?? "unset"}`,
+        );
+      }
+
+      if (this.options.onChunkFeedback && lastFeedback) {
+        this.options.onChunkFeedback(lastFeedback);
+      }
+
+      offset += chunkText.length;
+      isFirst = false;
+
+      if (lastFeedback && !lastFeedback.acceptMore && offset < text.length) {
+        const delay = lastFeedback.retryAfterMs || 1000;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
+
+    return lastFeedback;
   }
 
-  private async ingestWithRetry(params: IngestMarkdownDocumentParams): Promise<void> {
-    await withRetry(
-      () => this.rpcCall("ingest_markdown_document", params) as Promise<void>,
+  private async ingestWithRetry(params: IngestMarkdownDocumentParams): Promise<IngestMarkdownDocumentResponse> {
+    return withRetry(
+      () => this.rpcCall<IngestMarkdownDocumentResponse>("ingest_markdown_document", params),
       this.options.maxRetries,
       this.options.retryBaseDelayMs,
       this.logger,
