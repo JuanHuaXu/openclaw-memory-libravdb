@@ -15,6 +15,7 @@ function baseParams() {
       fileHash: "abc123",
       sourceSize: 128,
       sourceMtimeMs: 1234,
+      sourceCtimeMs: 1234,
       ingestVersion: 1,
       hashBackend: "test",
     },
@@ -26,7 +27,7 @@ test("chunked ingest replaces first chunk then appends remaining chunks", async 
   const queue = new IngestQueue(
     async (method, params) => {
       calls.push({ method, params: params as { mode?: IngestMode; text: string } });
-      return undefined as never;
+      return { ok: true } as never;
     },
     { error() {}, warn() {} },
     { chunkTokens: 4, maxRetries: 0 },

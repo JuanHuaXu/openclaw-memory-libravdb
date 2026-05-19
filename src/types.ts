@@ -50,9 +50,6 @@ export interface PluginConfig {
   markdownIngestionExclude?: string[];
   markdownIngestionDebounceMs?: number;
   markdownIngestionPriorityMode?: "mtime" | "ctime" | "size" | "fifo";
-  markdownIngestionTokenBudgetPerScan?: number;
-  markdownIngestionSmallFileThreshold?: number;
-  markdownIngestionLargeFileThreshold?: number;
   markdownIngestionMaxTokensPerFile?: number;
   markdownIngestionSnapshotPath?: string;
   markdownIngestionObsidianSnapshotPath?: string;
