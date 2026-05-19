@@ -626,7 +626,7 @@ test("markdown ingestion startup processes newest files first in mtime mode", as
   await handle.stop();
 });
 
-test("markdown ingestion startup defers oversized files and stops when scan token budget is depleted", async () => {
+test("markdown ingestion startup defers files exceeding per-file max token cap", async () => {
   const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-budget-"));
   const smallPath = path.join(tempRoot, "small.md");
   const mediumPath = path.join(tempRoot, "medium.md");

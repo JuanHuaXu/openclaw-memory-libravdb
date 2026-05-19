@@ -131,6 +131,14 @@ export class IngestQueue {
         continue;
       }
 
+      if (lastFeedback && lastFeedback.nodesAccepted === 0) {
+        this.logger.warn?.(
+          `[ingest-queue] Chunk permanently rejected for ${sourceDoc} ` +
+          `at offset=${offset} length=${chunkText.length} ` +
+          `tokenBurstLimit=${lastFeedback.tokenBurstLimit ?? "unset"}`,
+        );
+      }
+
       if (this.options.onChunkFeedback && lastFeedback) {
         this.options.onChunkFeedback(lastFeedback);
       }
