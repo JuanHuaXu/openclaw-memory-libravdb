@@ -1,6 +1,7 @@
 
 export interface PluginConfig {
   dbPath?: string;
+  /** Legacy fallback alias for grpcEndpoint. */
   sidecarPath?: string;
   /** Stable identity for cross-session durable memory. When set, all sessions
    *  share memories under user:{userId}. When unset, the plugin auto-derives
@@ -90,7 +91,6 @@ export interface PluginConfig {
   ollamaUrl?: string;
   compactModel?: string;
   rpcTimeoutMs?: number;
-  maxRetries?: number;
   logLevel?: "debug" | "info" | "warn" | "error";
   grpcEndpoint?: string;
   grpcEndpointTlsCa?: string;  // path to CA cert PEM file for remote TLS verification
@@ -149,33 +149,10 @@ export interface SearchResult {
   finalScore?: number;
 }
 
-export interface SidecarSocket {
-  setEncoding(encoding: string): void;
-  on(event: "data", handler: (chunk: Buffer) => void): void;
-  on(event: "close", handler: () => void): void;
-  on(event: "error", handler: (error: Error) => void): void;
-  once(event: "connect", handler: () => void): void;
-  once(event: "error", handler: (error: Error) => void): void;
-  off(event: "connect", handler: () => void): void;
-  off(event: "error", handler: (error: Error) => void): void;
-  write(chunk: Buffer | string): void;
-  destroy(err?: Error): void;
-}
-
 export interface LoggerLike {
   error(message: string): void;
   info?(message: string): void;
   warn?(message: string): void;
-}
-
-export interface SidecarHandle {
-  socket: SidecarSocket;
-  isDegraded(): boolean;
-  shutdown(): Promise<void>;
-}
-
-export interface RpcCallOptions {
-  timeoutMs: number;
 }
 
 export interface PredictedContext {
