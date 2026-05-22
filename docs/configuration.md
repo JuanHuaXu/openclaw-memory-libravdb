@@ -140,12 +140,12 @@ The plugin exposes `ingestionGateThreshold` for host-side gating decisions:
 | `markdownIngestionEnabled` | boolean | `false` | Watch markdown roots for changes |
 | `markdownIngestionRoots` | string[] | — | Directories to watch |
 | `markdownIngestionInclude` | string[] | — | Glob patterns to include |
-| `markdownIngestionExclude` | string[] | — | Glob patterns to exclude |
+| `markdownIngestionExclude` | string[] | dependency/build dirs | Glob patterns to exclude; when empty, defaults exclude `node_modules`, `.git`, `dist`, `build`, `coverage`, `.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.cache`, `.venv`, `venv`, `__pycache__` at any depth |
 | `markdownIngestionDebounceMs` | number | `150` | Debounce window for file change events |
 | `markdownIngestionObsidianEnabled` | boolean | `false` | Watch Obsidian vault roots |
 | `markdownIngestionObsidianRoots` | string[] | — | Obsidian vault directories |
 | `markdownIngestionObsidianInclude` | string[] | — | Obsidian glob include patterns |
-| `markdownIngestionObsidianExclude` | string[] | — | Obsidian glob exclude patterns |
+| `markdownIngestionObsidianExclude` | string[] | same defaults as above | Obsidian glob exclude patterns; defaults to the same set as generic markdown ingestion |
 | `markdownIngestionObsidianDebounceMs` | number | `150` | Obsidian debounce window |
 
 Configured markdown roots are ignored unless the matching enable flag is set to

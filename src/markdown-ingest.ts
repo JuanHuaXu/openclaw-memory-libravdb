@@ -15,6 +15,21 @@ const DEFAULT_TOKENIZER_ID = "markdown-ingest:v1";
 const MARKDOWN_INGEST_VERSION = 3;
 const HASH_BACKEND = "wasm-fnv1a64";
 const STREAM_CHUNK_BYTES = 64 * 1024;
+const DEFAULT_MARKDOWN_INGEST_EXCLUDES = [
+  "**/node_modules/**",
+  "**/.git/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/coverage/**",
+  "**/.next/**",
+  "**/.nuxt/**",
+  "**/.svelte-kit/**",
+  "**/.turbo/**",
+  "**/.cache/**",
+  "**/.venv/**",
+  "**/venv/**",
+  "**/__pycache__/**",
+];
 type Disposable = { close(): void };
 
 interface FsDirentLike {
@@ -282,7 +297,7 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
     this.kind = kind;
     this.roots = config.roots;
     this.includePatterns = config.include?.length ? config.include : [];
-    this.excludePatterns = config.exclude?.length ? config.exclude : [];
+    this.excludePatterns = config.exclude?.length ? config.exclude : DEFAULT_MARKDOWN_INGEST_EXCLUDES;
     this.debounceMs = config.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.fsApi = fsApi;
     this.getClient = getClient;
