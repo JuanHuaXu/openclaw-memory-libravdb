@@ -53,12 +53,12 @@ Relevant config fields:
 | `markdownIngestionEnabled` | Enables or disables generic markdown ingestion. |
 | `markdownIngestionRoots` | Generic markdown roots to watch. |
 | `markdownIngestionInclude` | Optional include globs for generic roots. |
-| `markdownIngestionExclude` | Optional exclude globs for generic roots. |
+| `markdownIngestionExclude` | Optional exclude globs for generic roots; defaults to common dependency/build directories (`**/node_modules/**`, `**/.git/**`, `**/dist/**`, and more) when not set. Setting an explicit list replaces the defaults entirely. |
 | `markdownIngestionDebounceMs` | Watch debounce window, default `150`. |
 | `markdownIngestionObsidianEnabled` | Enables Obsidian ingestion when vault roots exist. |
 | `markdownIngestionObsidianRoots` | Obsidian vault roots to watch. |
 | `markdownIngestionObsidianInclude` | Optional include globs for Obsidian roots. |
-| `markdownIngestionObsidianExclude` | Optional exclude globs for Obsidian roots. |
+| `markdownIngestionObsidianExclude` | Optional exclude globs for Obsidian roots; same defaults as generic markdown ingestion. |
 | `markdownIngestionObsidianDebounceMs` | Obsidian watch debounce window, default `150`. |
 
 By default, the Obsidian adapter auto-ingests notes that look like memory notes,

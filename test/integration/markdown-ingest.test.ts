@@ -948,3 +948,50 @@ test("REPLACE and APPEND ingest modes are unaffected by feedback interface chang
     await handle.stop();
   }
 });
+
+test("markdown ingestion default-excludes dependency and build directories", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-default-exclude-"));
+  const keepPath = path.join(tempRoot, "docs", "guide.md");
+  const nodeModulesPath = path.join(tempRoot, "node_modules", "pkg", "CHANGELOG.md");
+  const gitPath = path.join(tempRoot, ".git", "README.md");
+  const distPath = path.join(tempRoot, "dist", "README.md");
+  const nestedNodeModulesPath = path.join(tempRoot, "packages", "app", "node_modules", "pkg", "README.md");
+  const nestedBuildPath = path.join(tempRoot, "packages", "app", "build", "README.md");
+  await fsp.mkdir(path.dirname(keepPath), { recursive: true });
+  await fsp.mkdir(path.dirname(nodeModulesPath), { recursive: true });
+  await fsp.mkdir(path.dirname(gitPath), { recursive: true });
+  await fsp.mkdir(path.dirname(distPath), { recursive: true });
+  await fsp.mkdir(path.dirname(nestedNodeModulesPath), { recursive: true });
+  await fsp.mkdir(path.dirname(nestedBuildPath), { recursive: true });
+  await fsp.writeFile(keepPath, "# Keep\n\nUser-authored doc.");
+  await fsp.writeFile(nodeModulesPath, "# Changelog\n\nDependency docs.");
+  await fsp.writeFile(gitPath, "# Git internals\n\nVCS docs.");
+  await fsp.writeFile(distPath, "# Build output\n\nBuild artifact.");
+  await fsp.writeFile(nestedNodeModulesPath, "# Nested deps\n\nShould not ingest.");
+  await fsp.writeFile(nestedBuildPath, "# Nested build\n\nShould not ingest.");
+
+  const rpc = new FakeRpcClient();
+  const fsApi = new FakeFsApi();
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+    },
+    async () => rpc as never,
+    console,
+    fsApi as never,
+  );
+
+  await handle.start();
+
+  assert.equal(rpc.calls.filter((call) => call.method === "ingest_markdown_document").length, 1);
+  assert.equal(rpc.documents.has(keepPath), true);
+  assert.equal(rpc.documents.has(nodeModulesPath), false);
+  assert.equal(rpc.documents.has(gitPath), false);
+  assert.equal(rpc.documents.has(distPath), false);
+  assert.equal(rpc.documents.has(nestedNodeModulesPath), false);
+  assert.equal(rpc.documents.has(nestedBuildPath), false);
+
+  await handle.stop();
+});
