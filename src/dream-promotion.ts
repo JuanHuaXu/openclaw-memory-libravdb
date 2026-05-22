@@ -395,7 +395,7 @@ function parseHeading(value: string): string | null {
 }
 
 function isPromotionSection(section: string): boolean {
-  return section.includes("deep sleep") || section.includes("promot") || section.includes("dream");
+  return /^(?:deep sleep|dream promotion(?: candidates?)?|promotion candidates?|promote candidates?)$/.test(section);
 }
 
 function parseBulletCandidate(line: string): { body: string } | null {
