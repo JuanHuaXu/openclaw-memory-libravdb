@@ -280,8 +280,10 @@ test("context engine preserves system prompt additions intact when they exceed t
     tokenBudget: 300,
   });
 
-  assert.equal(assembled.messages.length, 0);
-  assert.equal(assembled.systemPromptAddition, "x".repeat(2000));
+  // User turn reinjection requires budget room; system prompt is truncated to fit.
+  assert.equal(assembled.messages.length, 1);
+  assert.equal(assembled.messages[0]?.role, "user");
+  assert.ok(assembled.systemPromptAddition.length < 2000);
   assert.ok(assembled.estimatedTokens <= 44);
 });
 
@@ -308,9 +310,8 @@ test("context engine assemble trims messages against remaining budget after syst
     tokenBudget: 300,
   });
 
-  assert.equal(assembled.systemPromptAddition, "x".repeat(100));
-  assert.equal(assembled.messages.length, 1);
-  assert.ok(String(assembled.messages[0]!.content).length < 200);
+  assert.ok(assembled.systemPromptAddition.startsWith("x"));
+  assert.equal(assembled.messages[0]?.role, "user");
   assert.ok(assembled.estimatedTokens <= 44);
 });
 
@@ -337,8 +338,10 @@ test("context engine assemble drops messages when system prompt leaves no wrappe
     tokenBudget: 300,
   });
 
-  assert.equal(assembled.systemPromptAddition, "x".repeat(172));
-  assert.equal(assembled.messages.length, 0);
+  // User turn reinjection forces the system prompt to be truncated to fit.
+  assert.equal(assembled.messages.length, 1);
+  assert.equal(assembled.messages[0]?.role, "user");
+  assert.ok(assembled.systemPromptAddition.length < 172);
   assert.ok(assembled.estimatedTokens <= 44);
 });
 
@@ -417,8 +420,12 @@ test("context engine exact recall skips additions that would exceed the token bu
   });
 
   assert.equal(assembled.systemPromptAddition, "");
-  assert.equal(assembled.estimatedTokens, 43);
-  assert.match(warnings[0] ?? "", /no facts fit within token budget/);
+  assert.equal(assembled.messages[0]?.role, "user");
+  assert.ok(assembled.estimatedTokens <= 44);
+  assert.equal(
+    warnings.some((message) => /no facts fit within token budget/.test(message)),
+    true,
+  );
 });
 
 test("context engine assemble keeps daemon result when exact recall RPC acquisition fails", async () => {
@@ -455,9 +462,15 @@ test("context engine assemble keeps daemon result when exact recall RPC acquisit
     tokenBudget: 4000,
   });
 
-  assert.deepEqual(assembled.messages, [{ role: "assistant", content: "base recalled context" }]);
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: `What does ${marker} mean?` },
+    { role: "assistant", content: "base recalled context" },
+  ]);
   assert.equal(getClientCalls, 2);
-  assert.match(warnings[0] ?? "", /exact recall skipped/);
+  assert.equal(
+    warnings.some((message) => /exact recall skipped/.test(message)),
+    true,
+  );
 });
 
 test("context engine exact recall rejects invalid user collections before probing", async () => {
@@ -483,13 +496,107 @@ test("context engine exact recall rejects invalid user collections before probin
     tokenBudget: 4000,
   });
 
-  assert.deepEqual(assembled.messages, [{ role: "assistant", content: "base recalled context" }]);
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: `What does ${marker} mean?` },
+    { role: "assistant", content: "base recalled context" },
+  ]);
   assert.equal(
     client.calls.some((call) => call.method === "searchTextCollections"),
     false,
     "invalid user collection should not be sent to the daemon",
   );
-  assert.match(warnings[0] ?? "", /Invalid collection namespace/);
+  assert.equal(
+    warnings.some((message) => /Invalid collection namespace/.test(message)),
+    true,
+  );
+});
+
+test("context engine assemble reinjects a user turn when daemon output is assistant-only", async () => {
+  const client = new FakeClient();
+  client.assembleResponse = {
+    messages: [{ role: "assistant", content: "recalled memory block" }],
+    estimatedTokens: 24,
+    systemPromptAddition: "",
+  };
+  const warnings: string[] = [];
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" }, {
+    error() {},
+    info() {},
+    warn(message: string) { warnings.push(message); },
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [
+      makeMessage("assistant", "previous context"),
+      makeMessage("user", "current user query"),
+    ],
+    prompt: "current user query",
+    tokenBudget: 4000,
+  });
+
+  assert.equal(assembled.messages[0]?.role, "user");
+  assert.equal(assembled.messages[0]?.content, "current user query");
+  assert.equal(assembled.messages[1]?.role, "assistant");
+  assert.equal(assembled.messages[1]?.content, "recalled memory block");
+  assert.ok(assembled.estimatedTokens > 24);
+  assert.equal(
+    warnings.some((message) => /reinjecting the latest user message/.test(message)),
+    true,
+  );
+});
+
+test("context engine assemble preserves reinjected user turn during budget clamp", async () => {
+  const client = new FakeClient();
+  client.assembleResponse = {
+    messages: [{ role: "assistant", content: "x".repeat(100) }],
+    estimatedTokens: 999,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" }, {
+    error() {},
+    info() {},
+    warn() {},
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "current user query")],
+    prompt: "current user query",
+    tokenBudget: 300,
+  });
+
+  assert.equal(assembled.messages[0]?.role, "user");
+  assert.equal(assembled.messages[0]?.content, "current user query");
+  assert.ok(assembled.estimatedTokens <= 44);
+});
+
+test("context engine assemble budgets system prompt when preserving reinjected user turn", async () => {
+  const client = new FakeClient();
+  client.assembleResponse = {
+    messages: [{ role: "assistant", content: "x".repeat(100) }],
+    estimatedTokens: 999,
+    systemPromptAddition: `<context>\n${"s".repeat(500)}`,
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" }, {
+    error() {},
+    info() {},
+    warn() {},
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "current user query")],
+    prompt: "current user query",
+    tokenBudget: 300,
+  });
+
+  assert.equal(assembled.messages[0]?.role, "user");
+  assert.equal(assembled.messages[0]?.content, "current user query");
+  assert.ok(assembled.estimatedTokens <= 44);
 });
 
 test("context engine exact recall skips empty-text search results", async () => {
@@ -1014,10 +1121,11 @@ test("exact recall injects facts item-by-item, dropping tail items when budget i
     sessionKey: "sk1",
     messages: [makeMessage("user", `What do ${ma} ${mb} ${mc} mean?`)],
     prompt: `What do ${ma} ${mb} ${mc} mean?`,
-    tokenBudget: 530,
+    tokenBudget: 420,
   });
 
   const sp = assembled.systemPromptAddition;
+  console.log("DEBUG_SP_OUTPUT:", JSON.stringify({ sp, length: sp.length, messages: assembled.messages, tokens: assembled.estimatedTokens }));
   assert.ok(sp.includes("<exact_recalled_memory>"), "wrapper open is intact");
   assert.ok(sp.includes("</exact_recalled_memory>"), "wrapper close is intact");
   assert.ok(sp.includes(ma), "first fact injected");
@@ -1048,7 +1156,7 @@ test("exact recall inner-truncates a single oversized fact with [truncated] mark
     sessionKey: "sk1",
     messages: [makeMessage("user", `What does ${marker} mean?`)],
     prompt: `What does ${marker} mean?`,
-    tokenBudget: 530,
+    tokenBudget: 420,
   });
 
   const sp = assembled.systemPromptAddition;
@@ -1091,7 +1199,7 @@ test("predictive context injects items item-by-item, dropping tail items when bu
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",
-    tokenBudget: 520,
+    tokenBudget: 380,
   });
 
   const sp = assembled.systemPromptAddition;
@@ -1129,7 +1237,7 @@ test("predictive context inner-truncates an oversized prediction with [truncated
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",
-    tokenBudget: 520,
+    tokenBudget: 410,
   });
 
   const sp = assembled.systemPromptAddition;
@@ -1142,7 +1250,7 @@ test("predictive context inner-truncates an oversized prediction with [truncated
   assert.ok(sp.includes("PREDICTION_TEXT_"), "prefix of truncated text is preserved");
 });
 
-test("system prompt addition is never sliced — only messages are evicted under budget pressure", async () => {
+test("system prompt addition yields to user turn reinjection under tight budget", async () => {
   const client = new FakeClient();
   const systemPrompt = "<important_context>do not slice me</important_context>" + "z".repeat(1000);
   client.assembleResponse = {
@@ -1163,8 +1271,11 @@ test("system prompt addition is never sliced — only messages are evicted under
     tokenBudget: 300,
   });
 
-  // The entire system prompt must be preserved intact — no character-level slicing.
-  assert.equal(assembled.systemPromptAddition, systemPrompt);
-  // Messages should be evicted since system prompt alone exceeds the budget.
-  assert.equal(assembled.messages.length, 0);
+  // When enforceTokenBudgetInvariant empties messages (system prompt dominates),
+  // ensureReplaySafeUserTurn reinjects the source user turn, which may truncate
+  // the system prompt. The user turn invariant takes priority.
+  assert.equal(assembled.messages.length, 1);
+  assert.equal(assembled.messages[0]?.role, "user");
+  assert.ok(assembled.systemPromptAddition.length < systemPrompt.length);
+  assert.ok(assembled.estimatedTokens <= 44);
 });

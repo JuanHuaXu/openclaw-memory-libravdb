@@ -613,6 +613,112 @@ function appendSystemPromptAddition(existing: string, addition: string): string 
   return `${trimmedExisting}\n\n${addition}`;
 }
 
+function hasReplaySafeUserTurn(messages: OpenClawCompatibleMessage[]): boolean {
+  return messages.some(
+    (message) => message.role === "user" && normalizeKernelContent(message.content).trim().length > 0,
+  );
+}
+
+function findLastReplaySafeUserMessage(
+  messages: OpenClawCompatibleMessage[],
+): OpenClawCompatibleMessage | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index]!;
+    if (candidate.role !== "user") continue;
+    const content = normalizeKernelContent(candidate.content);
+    if (content.trim().length === 0) continue;
+    return {
+      role: "user",
+      content,
+      ...(typeof candidate.id === "string" ? { id: candidate.id } : {}),
+    };
+  }
+  return null;
+}
+
+function truncateSystemPromptAdditionToTokenBudget(value: string, tokenBudget: number): string {
+  if (tokenBudget <= 0) return "";
+  const maxChars = Math.max(1, tokenBudget * APPROX_CHARS_PER_TOKEN);
+  if (value.length <= maxChars) return value;
+  return value.slice(0, maxChars);
+}
+
+function ensureReplaySafeUserTurn(
+  assembled: OpenClawCompatibleAssembleResult,
+  sourceMessages: OpenClawCompatibleMessage[],
+  logger?: LoggerLike,
+  tokenBudget?: number,
+): OpenClawCompatibleAssembleResult {
+  if (hasReplaySafeUserTurn(assembled.messages)) return assembled;
+
+  const fallbackUser = findLastReplaySafeUserMessage(sourceMessages);
+  if (!fallbackUser) return assembled;
+
+  logger?.warn?.(
+    "LibraVDB assemble produced no replay-safe user turn; reinjecting the latest user message for provider compatibility.",
+  );
+  const baseEstimatedTokens = Math.max(
+    0,
+    assembled.estimatedTokens,
+    approximateMessagesTokens(assembled.messages),
+  );
+
+  if (typeof tokenBudget === "number" && Number.isFinite(tokenBudget) && tokenBudget > 0) {
+    const effectiveBudget = resolveEffectiveAssembleBudget(tokenBudget);
+    const fallbackCost = approximateMessageTokens(fallbackUser);
+    const systemPromptTokens = approximateTokenCount(assembled.systemPromptAddition);
+    const fullMessages = [fallbackUser, ...assembled.messages];
+    const fullApproxTokens = systemPromptTokens + fallbackCost + approximateMessagesTokens(assembled.messages);
+
+    if (baseEstimatedTokens + fallbackCost <= effectiveBudget && fullApproxTokens <= effectiveBudget) {
+      return {
+        ...assembled,
+        messages: fullMessages,
+        estimatedTokens: Math.max(baseEstimatedTokens + fallbackCost, fullApproxTokens),
+      };
+    }
+
+    if (fallbackCost >= effectiveBudget) {
+      const truncated = truncateContentToTokenBudget(fallbackUser.content, Math.max(1, effectiveBudget - 8));
+      return {
+        ...assembled,
+        systemPromptAddition: "",
+        messages: truncated ? [{ ...fallbackUser, content: truncated }] : [],
+        estimatedTokens: Math.min(
+          effectiveBudget,
+          truncated ? approximateMessageTokens({ ...fallbackUser, content: truncated }) : 0,
+        ),
+      };
+    }
+
+    const remainingBudget = effectiveBudget - fallbackCost;
+    const systemPromptAddition =
+      systemPromptTokens > remainingBudget
+        ? truncateSystemPromptAdditionToTokenBudget(assembled.systemPromptAddition, remainingBudget)
+        : assembled.systemPromptAddition;
+    const trimmedSystemPromptTokens = approximateTokenCount(systemPromptAddition);
+    const messageBudget = Math.max(0, remainingBudget - trimmedSystemPromptTokens);
+    const trimmedMessages = trimMessagesToBudget(assembled.messages, messageBudget);
+    const messages = [fallbackUser, ...trimmedMessages];
+    return {
+      ...assembled,
+      systemPromptAddition,
+      messages,
+      estimatedTokens: Math.min(
+        effectiveBudget,
+        fallbackCost + trimmedSystemPromptTokens + approximateMessagesTokens(trimmedMessages),
+      ),
+    };
+  }
+
+  const messages = [fallbackUser, ...assembled.messages];
+  return {
+    ...assembled,
+    messages,
+    estimatedTokens: baseEstimatedTokens + approximateMessageTokens(fallbackUser),
+  };
+}
+
 export function normalizeAssembleResult(result: {
   messages?: Array<{ role: string; content?: unknown; id?: string }>;
   estimatedTokens?: number;
@@ -722,6 +828,7 @@ export function buildContextEngineFactory(
       userId: string;
       sessionId: string;
       tokenBudget?: number;
+      reservedTokens?: number;
     },
   ): Promise<OpenClawCompatibleAssembleResult> {
     if (cfg.crossSessionRecall === false) return assembled;
@@ -783,8 +890,9 @@ export function buildContextEngineFactory(
     const effectiveBudget = normalizeTokenBudget(args.tokenBudget) != null
       ? resolveEffectiveAssembleBudget(args.tokenBudget)
       : undefined;
+    const reserved = args.reservedTokens ?? RESERVED_CURRENT_TURN_TOKENS;
     const availableBudget = effectiveBudget != null
-      ? Math.max(0, effectiveBudget - approximateTokenCount(assembled.systemPromptAddition) - RESERVED_CURRENT_TURN_TOKENS)
+      ? Math.max(0, effectiveBudget - approximateTokenCount(assembled.systemPromptAddition) - reserved)
       : Number.MAX_SAFE_INTEGER;
 
     const section = adaptivelyBuildWrappedSection(
@@ -988,6 +1096,10 @@ export function buildContextEngineFactory(
         sessionKey: args.sessionKey,
       });
       const messages = normalizeKernelMessages(args.messages);
+      const lastUserMessage = findLastReplaySafeUserMessage(messages);
+      const reservedCurrentTurnTokens = lastUserMessage
+        ? approximateMessageTokens(lastUserMessage)
+        : RESERVED_CURRENT_TURN_TOKENS;
       const currentContextTokens = resolvePredictiveCompactionTokenCount({
         currentTokenCount: args.currentTokenCount,
         messages,
@@ -1053,6 +1165,7 @@ export function buildContextEngineFactory(
             userId,
             sessionId,
             tokenBudget: args.tokenBudget,
+            reservedTokens: reservedCurrentTurnTokens,
           }),
           args.tokenBudget,
         );
@@ -1063,7 +1176,7 @@ export function buildContextEngineFactory(
             ? resolveEffectiveAssembleBudget(args.tokenBudget)
             : undefined;
           const availableBudget = effectiveBudget != null
-            ? Math.max(0, effectiveBudget - approximateTokenCount(enforced.systemPromptAddition) - RESERVED_CURRENT_TURN_TOKENS)
+            ? Math.max(0, effectiveBudget - approximateTokenCount(enforced.systemPromptAddition) - reservedCurrentTurnTokens)
             : Number.MAX_SAFE_INTEGER;
 
           const section = adaptivelyBuildWrappedSection(
@@ -1092,12 +1205,17 @@ export function buildContextEngineFactory(
           }
         }
         enforced = enforceTokenBudgetInvariant(enforced, args.tokenBudget);
-        return enforced;
+        return ensureReplaySafeUserTurn(enforced, args.messages, logger, args.tokenBudget);
       } catch (error) {
         logger.warn?.(
           `LibraVDB assemble failed, using budget-clamped fallback context: ${error instanceof Error ? error.message : String(error)}`,
         );
-        return buildBudgetFallbackContext(args.messages, args.tokenBudget);
+        return ensureReplaySafeUserTurn(
+          buildBudgetFallbackContext(args.messages, args.tokenBudget),
+          args.messages,
+          logger,
+          args.tokenBudget,
+        );
       }
     },
     async compact(args: {
