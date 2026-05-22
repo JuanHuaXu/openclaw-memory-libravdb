@@ -48,3 +48,29 @@ test("resolveUserCollection validates the full prefixed collection name", () => 
   assert.throws(() => resolveUserCollection("has spaces"), /Invalid collection namespace/);
   assert.throws(() => resolveUserCollection("a".repeat(124)), /Invalid collection namespace/);
 });
+
+test("resolveDurableNamespace rejects userId starting with reserved prefix", () => {
+  for (const prefix of ["session-key:", "agent-id:", "user:"]) {
+    assert.throws(
+      () => resolveDurableNamespace({ userId: `${prefix}evil` }),
+      /reserved prefix/,
+      `userId starting with "${prefix}" should be rejected`,
+    );
+  }
+});
+
+test("resolveDurableNamespace rejects invalid namespace characters", () => {
+  assert.throws(
+    () => resolveDurableNamespace({ userId: "has spaces" }),
+    /Invalid collection namespace/,
+  );
+  assert.throws(
+    () => resolveDurableNamespace({ userId: "1starts-with-number" }),
+    /Invalid collection namespace/,
+  );
+});
+
+test("resolveDurableNamespace accepts valid userId without reserved prefix", () => {
+  assert.equal(resolveDurableNamespace({ userId: "my-user" }), "my-user");
+  assert.equal(resolveDurableNamespace({ userId: "user_with_underscores" }), "user_with_underscores");
+});
