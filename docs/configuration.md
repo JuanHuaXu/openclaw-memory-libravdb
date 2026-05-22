@@ -15,6 +15,8 @@ CPU when a provider is unavailable.
 | `grpcEndpoint` | string | — | gRPC kernel endpoint. See `grpcEndpointTlsMode` for credential control. |
 | `grpcEndpointTlsCa` | string | — | Path to CA certificate PEM file. Only needed for self-signed or private CA certs. Omit when using Let's Encrypt or cert-manager. |
 | `grpcEndpointTlsMode` | string | `"auto"` | gRPC credential mode. `"auto"`: loopback/unix → plaintext, remote → TLS. `"tls"`: always TLS. `"insecure"`: always plaintext. |
+| `grpcEndpointTlsClientCert` | string | — | Path to client certificate PEM for mTLS. Must be paired with `grpcEndpointTlsClientKey`. |
+| `grpcEndpointTlsClientKey` | string | — | Path to client private key PEM for mTLS. Must be paired with `grpcEndpointTlsClientCert`. |
 | `rpcTimeoutMs` | number | `30000` | Per-call timeout for service RPC (ms) |
 | `dbPath` | string | auto-named | Explicit DB path; when set bypasses model-specific naming |
 
@@ -55,6 +57,19 @@ Set `grpcEndpointTlsCa` to the path of the CA certificate PEM file:
 ```
 The daemon must be configured with matching TLS cert and key via
 `LIBRAVDB_GRPC_TLS_CERT` and `LIBRAVDB_GRPC_TLS_KEY`.
+
+**Remote daemon with mTLS (mutual TLS):**
+When the daemon requires client certificate authentication, set both
+`grpcEndpointTlsClientCert` and `grpcEndpointTlsClientKey` (they must both
+be present or both be omitted):
+```json
+{
+  "grpcEndpoint": "tcp:yourdaemon.internal:50051",
+  "grpcEndpointTlsCa": "/etc/certs/ca.pem",
+  "grpcEndpointTlsClientCert": "/etc/certs/client-cert.pem",
+  "grpcEndpointTlsClientKey": "/etc/certs/client-key.pem"
+}
+```
 
 **Local daemon with TLS enabled:**
 If the daemon has `LIBRAVDB_GRPC_TLS_CERT`/`LIBRAVDB_GRPC_TLS_KEY` set on a loopback
@@ -147,10 +162,48 @@ The plugin exposes `ingestionGateThreshold` for host-side gating decisions:
 | `markdownIngestionObsidianInclude` | string[] | — | Obsidian glob include patterns |
 | `markdownIngestionObsidianExclude` | string[] | same defaults as above | Obsidian glob exclude patterns; defaults to the same set as generic markdown ingestion |
 | `markdownIngestionObsidianDebounceMs` | number | `150` | Obsidian debounce window |
+| `markdownIngestionSnapshotPath` | string | — | Path to snapshot file for generic markdown ingestion state |
+| `markdownIngestionObsidianSnapshotPath` | string | — | Path to snapshot file for Obsidian ingestion state |
 
 Configured markdown roots are ignored unless the matching enable flag is set to
 `true`. Set `markdownIngestionEnabled: true` for generic roots and
 `markdownIngestionObsidianEnabled: true` for Obsidian vault roots.
+
+## Continuity
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `continuityMinTurns` | number | — | Minimum conversation turns before continuity retrieval activates |
+| `continuityPriorContextTokens` | number | — | Token budget allocated to prior context in continuity retrieval |
+| `continuityTailBudgetTokens` | number | — | Token budget for tail-end context in continuity retrieval |
+
+## Recovery
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `recoveryFloorScore` | number | — | Minimum score floor for recovery-phase retrieval |
+| `recoveryMinConfidenceMean` | number | — | Minimum mean confidence threshold for recovery candidates |
+| `recoveryMinTopK` | number | — | Minimum number of top-K results required for recovery |
+
+## Section 7 scoring
+
+Two-pass retrieval scoring subsystem. These keys control the authority-weighted
+and recency-adjusted scoring pass that runs after the initial vector search.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `section7Theta1` | number | — | Primary theta parameter for first-pass scoring |
+| `section7Kappa` | number | — | Kappa scaling factor for authority scoring |
+| `section7HopEta` | number | — | Eta decay for hop-distance scoring |
+| `section7HopThreshold` | number | — | Hop distance threshold for second-pass eligibility |
+| `section7CoarseTopK` | number | — | Top-K for coarse (first-pass) retrieval |
+| `section7SecondPassTopK` | number | — | Top-K for second-pass refined retrieval |
+| `section7AuthorityRecencyLambda` | number | — | Lambda for recency decay in authority scoring (commented out in code) |
+| `section7AuthorityRecencyWeight` | number | — | Weight for authority recency in combined score |
+| `section7AuthorityFrequencyWeight` | number | — | Weight for authority frequency in combined score |
+| `section7AuthorityAuthoredWeight` | number | — | Weight for authority authored signal in combined score |
+| `section7AuthoritySalienceWeight` | number | — | Weight for authority salience in combined score |
+| `section7RecencyAccessLambda` | number | — | Lambda for access-based recency decay |
 
 ## Dream promotion
 
