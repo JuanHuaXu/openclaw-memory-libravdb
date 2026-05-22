@@ -9,31 +9,30 @@ import { createMarkdownIngestionHandle } from "../../src/markdown-ingest.js";
 class FakeRpcClient {
   calls: Array<{ method: string; params: unknown }> = [];
   documents = new Map<string, { text: string; tokenizerId: string; coreDoc: boolean; sourceMeta: Record<string, unknown> }>();
+  feedbackSupplier?: (sourceDoc: string, callIndex: number) => Record<string, unknown> | undefined;
 
-  async call<T>(method: string, params: unknown): Promise<T> {
-    this.calls.push({ method, params });
+  private ingestCallCount = 0;
 
-    if (method === "ingest_markdown_document") {
-      const { sourceDoc, text, tokenizerId, coreDoc, sourceMeta } = params as {
-        sourceDoc: string;
-        text: string;
-        tokenizerId: string;
-        coreDoc: boolean;
-        sourceMeta: Record<string, unknown>;
-      };
-      this.documents.set(sourceDoc, { text, tokenizerId, coreDoc, sourceMeta });
-      return { ok: true } as T;
-    }
-    if (method === "delete_authored_document") {
-      const { sourceDoc } = params as { sourceDoc: string };
-      this.documents.delete(sourceDoc);
-      return { ok: true } as T;
-    }
-    if (method === "ensure_collections") {
-      return { ok: true } as T;
-    }
+  async ingestMarkdownDocument(params: {
+    sourceDoc: string;
+    text: string;
+    tokenizerId: string;
+    coreDoc: boolean;
+    sourceMeta: Record<string, unknown>;
+    mode?: number;
+  }): Promise<{ ok: boolean; feedback?: Record<string, unknown> }> {
+    this.calls.push({ method: "ingest_markdown_document", params });
+    const { sourceDoc, text, tokenizerId, coreDoc, sourceMeta } = params;
+    this.documents.set(sourceDoc, { text, tokenizerId, coreDoc, sourceMeta });
+    const callIdx = this.ingestCallCount++;
+    const feedback = this.feedbackSupplier?.(sourceDoc, callIdx);
+    return feedback ? { ok: true, feedback } : { ok: true };
+  }
 
-    throw new Error(`unexpected rpc call: ${method}`);
+  async deleteAuthoredDocument(params: { sourceDoc: string }): Promise<{ ok: boolean }> {
+    this.calls.push({ method: "delete_authored_document", params });
+    this.documents.delete(params.sourceDoc);
+    return { ok: true };
   }
 }
 
@@ -50,7 +49,7 @@ class FakeFsApi {
 
   async stat(file: string) {
     const stat = await fsp.stat(file);
-    return { size: stat.size, mtimeMs: stat.mtimeMs };
+    return { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs };
   }
 
   watch(dir: string, onChange: (event: string, filename: string | Buffer | null) => void) {
@@ -67,6 +66,19 @@ class FakeFsApi {
         }
       },
       on: () => {},
+    };
+  }
+
+  async openReadStream(file: string) {
+    const handle = await fsp.open(file, "r");
+    return {
+      async read(buffer: Buffer): Promise<{ bytesRead: number }> {
+        const result = await handle.read(buffer, 0, buffer.length, null);
+        return { bytesRead: result.bytesRead };
+      },
+      async close(): Promise<void> {
+        await handle.close().catch(() => {});
+      },
     };
   }
 
@@ -99,7 +111,7 @@ test("markdown ingestion roots stay inert unless explicitly enabled", async () =
       markdownIngestionRoots: [tempRoot],
       markdownIngestionDebounceMs: 0,
     },
-    async () => rpc,
+    async () => rpc as never,
     console,
     fsApi as never,
   );
@@ -127,7 +139,7 @@ test("obsidian roots stay inert unless explicitly enabled", async () => {
       markdownIngestionObsidianRoots: [tempRoot],
       markdownIngestionObsidianDebounceMs: 0,
     },
-    async () => rpc,
+    async () => rpc as never,
     console,
     fsApi as never,
   );
@@ -168,7 +180,7 @@ test("markdown ingestion forwards raw markdown to the go sidecar and stays hash-
       markdownIngestionDebounceMs: 0,
       markdownIngestionSnapshotPath: snapshotPath(tempRoot),
     },
-    async () => rpc,
+    async () => rpc as never,
     console,
     fsApi as never,
   );
@@ -247,7 +259,7 @@ test("obsidian markdown ingestion flips source kind while reusing the same rpc p
       markdownIngestionObsidianDebounceMs: 0,
       markdownIngestionObsidianSnapshotPath: snapshotPath(tempRoot, "obsidian"),
     },
-    async () => rpc,
+    async () => rpc as never,
     console,
     fsApi as never,
   );
@@ -281,7 +293,7 @@ test("obsidian markdown ingestion skips untaged notes by default", async () => {
       markdownIngestionObsidianDebounceMs: 0,
       markdownIngestionObsidianSnapshotPath: snapshotPath(tempRoot, "obsidian"),
     },
-    async () => rpc,
+    async () => rpc as never,
     console,
     fsApi as never,
   );
@@ -315,7 +327,7 @@ test("markdown ingestion always includes MEMORY.md by filename even under narrow
       markdownIngestionDebounceMs: 0,
       markdownIngestionSnapshotPath: snapshotPath(tempRoot),
     },
-    async () => rpc,
+    async () => rpc as never,
     console,
     fsApi as never,
   );
@@ -352,7 +364,7 @@ test("obsidian markdown ingestion accepts inline tags like #project", async () =
       markdownIngestionObsidianDebounceMs: 0,
       markdownIngestionObsidianSnapshotPath: snapshotPath(tempRoot, "obsidian"),
     },
-    async () => rpc,
+    async () => rpc as never,
     console,
     fsApi as never,
   );
@@ -390,7 +402,7 @@ test("obsidian markdown ingestion accepts CRLF frontmatter tags", async () => {
       markdownIngestionObsidianDebounceMs: 0,
       markdownIngestionObsidianSnapshotPath: snapshotPath(tempRoot, "obsidian"),
     },
-    async () => rpc,
+    async () => rpc as never,
     console,
     fsApi as never,
   );
@@ -424,7 +436,7 @@ test("obsidian markdown ingestion accepts tags in headings", async () => {
       markdownIngestionObsidianDebounceMs: 0,
       markdownIngestionObsidianSnapshotPath: snapshotPath(tempRoot, "obsidian"),
     },
-    async () => rpc,
+    async () => rpc as never,
     console,
     fsApi as never,
   );
@@ -453,12 +465,11 @@ test("markdown ingestion stop waits for an in-flight startup scan", async () => 
   let rpcCompleted = false;
 
   const rpc = {
-    async call<T>(method: string): Promise<T> {
-      assert.equal(method, "ingest_markdown_document");
+    async ingestMarkdownDocument(_params: unknown) {
       callStarted();
       await releaseCallPromise;
       rpcCompleted = true;
-      return { ok: true } as T;
+      return { ok: true };
     },
   };
 
@@ -469,7 +480,7 @@ test("markdown ingestion stop waits for an in-flight startup scan", async () => 
       markdownIngestionDebounceMs: 0,
       markdownIngestionSnapshotPath: snapshotPath(tempRoot),
     },
-    async () => rpc,
+    async () => rpc as never,
     { error() {}, warn() {} },
   );
 
@@ -513,7 +524,7 @@ test("markdown ingestion prunes excluded directories before recursion", async ()
       markdownIngestionDebounceMs: 0,
       markdownIngestionSnapshotPath: path.join(tempRoot, "snapshot.json"),
     },
-    async () => rpc,
+    async () => rpc as never,
     { error() {}, warn() {}, info: (message: string) => infoMessages.push(message) },
     fsApi as never,
   );
@@ -543,7 +554,7 @@ test("markdown ingestion persists snapshots across adapter restarts", async () =
       markdownIngestionDebounceMs: 0,
       markdownIngestionSnapshotPath: snapshotPath,
     },
-    async () => firstRpc,
+    async () => firstRpc as never,
     { error() {}, warn() {}, info() {} },
   );
 
@@ -562,7 +573,7 @@ test("markdown ingestion persists snapshots across adapter restarts", async () =
       markdownIngestionDebounceMs: 0,
       markdownIngestionSnapshotPath: snapshotPath,
     },
-    async () => secondRpc,
+    async () => secondRpc as never,
     { error() {}, warn() {}, info: (message: string) => infoMessages.push(message) },
   );
 
@@ -573,4 +584,414 @@ test("markdown ingestion persists snapshots across adapter restarts", async () =
   assert.equal(infoMessages.some((message) => message.includes("unchanged=1")), true);
 
   await secondHandle.stop();
+});
+
+test("markdown ingestion startup processes newest files first in mtime mode", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-priority-"));
+  const oldestPath = path.join(tempRoot, "old.md");
+  const newestPath = path.join(tempRoot, "new.md");
+  await fsp.writeFile(oldestPath, "# Old\n\noldest");
+  await fsp.writeFile(newestPath, "# New\n\nnewest");
+  const now = Date.now();
+  await fsp.utimes(oldestPath, now / 1000, (now - 5000) / 1000);
+  await fsp.utimes(newestPath, now / 1000, now / 1000);
+
+  const rpc = new FakeRpcClient();
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+      markdownIngestionPriorityMode: "mtime",
+    },
+    async () => rpc as never,
+    { error() {}, warn() {}, info() {} },
+  );
+
+  await handle.start();
+
+  const ingestCalls = rpc.calls.filter((call) => call.method === "ingest_markdown_document");
+  assert.equal(ingestCalls.length, 2);
+  assert.equal((ingestCalls[0].params as { sourceDoc: string }).sourceDoc, newestPath);
+  assert.equal((ingestCalls[1].params as { sourceDoc: string }).sourceDoc, oldestPath);
+
+  await handle.stop();
+});
+
+test("markdown ingestion startup defers files exceeding per-file max token cap", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-budget-"));
+  const smallPath = path.join(tempRoot, "small.md");
+  const mediumPath = path.join(tempRoot, "medium.md");
+  const oversizedPath = path.join(tempRoot, "oversized.md");
+  await fsp.writeFile(smallPath, "# Small\n\nok");
+  await fsp.writeFile(mediumPath, "# Medium\n\n" + "m".repeat(900));
+  await fsp.writeFile(oversizedPath, "# Oversized\n\n" + "x".repeat(1200));
+
+  const rpc = new FakeRpcClient();
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+      markdownIngestionPriorityMode: "fifo",
+      markdownIngestionMaxTokensPerFile: 200,
+    },
+    async () => rpc as never,
+    { error() {}, warn() {}, info() {} },
+  );
+
+  try {
+    await handle.start();
+
+    const ingested = rpc.calls
+      .filter((call) => call.method === "ingest_markdown_document")
+      .map((call) => (call.params as { sourceDoc: string }).sourceDoc);
+    assert.equal(ingested.includes(smallPath), true);
+    assert.equal(ingested.includes(mediumPath), false);
+    assert.equal(ingested.includes(oversizedPath), false);
+  } finally {
+    await handle.stop();
+  }
+});
+
+test("markdown ingestion startup streams reads without fsApi.readFile dependency", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-stream-"));
+  const filePath = path.join(tempRoot, "stream.md");
+  await fsp.writeFile(filePath, "# Stream\n\n" + "s".repeat(5000));
+
+  const rpc = new FakeRpcClient();
+  const fsBase = new FakeFsApi();
+  const fsApi = {
+    readdir: fsBase.readdir.bind(fsBase),
+    stat: fsBase.stat.bind(fsBase),
+    watch: fsBase.watch.bind(fsBase),
+    openReadStream: fsBase.openReadStream.bind(fsBase),
+    readFile: async (_file: string) => {
+      throw new Error("readFile should not be called when streaming ingest is enabled");
+    },
+  };
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+    },
+    async () => rpc as never,
+    { error() {}, warn() {}, info() {} },
+    fsApi as never,
+  );
+
+  try {
+    await handle.start();
+    assert.equal(rpc.calls.filter((call) => call.method === "ingest_markdown_document").length, 3);
+  } finally {
+    await handle.stop();
+  }
+});
+
+test("backpressure resume cursor skips already-processed files on retry scan", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-resume-"));
+  const newestPath = path.join(tempRoot, "03-newest.md");
+  const middlePath = path.join(tempRoot, "02-middle.md");
+  const oldestPath = path.join(tempRoot, "01-oldest.md");
+  const now = Date.now();
+  await fsp.writeFile(newestPath, "# Newest\n\nMost recently modified.");
+  await fsp.writeFile(middlePath, "# Middle\n\nMiddle recency.");
+  await fsp.writeFile(oldestPath, "# Oldest\n\nOldest file.");
+  await fsp.utimes(newestPath, now / 1000, now / 1000);
+  await fsp.utimes(middlePath, now / 1000, (now - 2000) / 1000);
+  await fsp.utimes(oldestPath, now / 1000, (now - 4000) / 1000);
+
+  let ingestCallCount = 0;
+  const rpc = new FakeRpcClient();
+  rpc.feedbackSupplier = (_sourceDoc: string, _callIndex: number) => {
+    ingestCallCount++;
+    if (ingestCallCount === 1) {
+      return { acceptMore: false, retryAfterMs: 50 };
+    }
+    return { acceptMore: true, retryAfterMs: 0 };
+  };
+
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+      markdownIngestionPriorityMode: "mtime",
+    },
+    async () => rpc as never,
+    { error() {}, warn() {}, info() {} },
+  );
+
+  try {
+    await handle.start();
+
+    const firstPassCalls = rpc.calls.filter((call) => call.method === "ingest_markdown_document");
+    assert.equal(firstPassCalls.length, 1, "first scan should ingest only one file before backpressure");
+    // With mtime sort, the newest file is first
+    assert.equal(
+      (firstPassCalls[0].params as { sourceDoc: string }).sourceDoc,
+      newestPath,
+      "first ingested file should be the newest file",
+    );
+
+    await delay(200);
+
+    const allIngestCalls = rpc.calls.filter((call) => call.method === "ingest_markdown_document");
+    assert.equal(allIngestCalls.length, 3, "resume scan should ingest remaining files");
+    const ingestedPaths = allIngestCalls.map((call) => (call.params as { sourceDoc: string }).sourceDoc);
+    assert.equal(ingestedPaths.filter((p) => p === newestPath).length, 1, "newest file ingested exactly once");
+    assert.equal(ingestedPaths.includes(middlePath), true, "middle file should be ingested on resume");
+    assert.equal(ingestedPaths.includes(oldestPath), true, "oldest file should be ingested on resume");
+  } finally {
+    await handle.stop();
+  }
+});
+
+test("resume cursor invalidates when target file is deleted during pause", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-resume-deleted-"));
+  const firstPath = path.join(tempRoot, "first.md");
+  const secondPath = path.join(tempRoot, "second.md");
+  const now = Date.now();
+  await fsp.writeFile(firstPath, "# First\n\nFirst file.");
+  await fsp.writeFile(secondPath, "# Second\n\nSecond file.");
+  await fsp.utimes(firstPath, now / 1000, now / 1000);
+  await fsp.utimes(secondPath, now / 1000, (now - 2000) / 1000);
+
+  let ingestCount = 0;
+  const rpc = new FakeRpcClient();
+  rpc.feedbackSupplier = (_sourceDoc: string, _callIndex: number) => {
+    ingestCount++;
+    if (ingestCount === 1) {
+      return { acceptMore: false, retryAfterMs: 5000 };
+    }
+    return { acceptMore: true, retryAfterMs: 0 };
+  };
+
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+      markdownIngestionPriorityMode: "mtime",
+    },
+    async () => rpc as never,
+    { error() {}, warn() {}, info() {} },
+  );
+
+  try {
+    await handle.start();
+
+    const afterFirstPass = rpc.calls.filter((call) => call.method === "ingest_markdown_document");
+    assert.equal(afterFirstPass.length, 1, "first file should be ingested before backpressure");
+
+    await fsp.rm(secondPath);
+    await handle.refresh();
+
+    const allCalls = rpc.calls;
+    const ingestCalls = allCalls.filter((call) => call.method === "ingest_markdown_document");
+    const deleteCalls = allCalls.filter((call) => call.method === "delete_authored_document");
+    assert.equal(ingestCalls.length, 1, "no additional ingest calls after resume with deleted cursor target");
+    assert.equal(deleteCalls.length, 1, "deleted cursor target should produce a delete call");
+  } finally {
+    await handle.stop();
+  }
+});
+
+test("watcher-triggered scan resets resume cursor for full re-scan", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-watcher-reset-"));
+  const firstPath = path.join(tempRoot, "first.md");
+  const secondPath = path.join(tempRoot, "second.md");
+  const now = Date.now();
+  await fsp.writeFile(firstPath, "# First\n\nOriginal content.");
+  await fsp.writeFile(secondPath, "# Second\n\nSecond file.");
+  await fsp.utimes(firstPath, now / 1000, now / 1000);
+  await fsp.utimes(secondPath, now / 1000, (now - 2000) / 1000);
+
+  let ingestCount = 0;
+  const rpc = new FakeRpcClient();
+  rpc.feedbackSupplier = (_sourceDoc: string, _callIndex: number) => {
+    ingestCount++;
+    if (ingestCount === 1) {
+      return { acceptMore: false, retryAfterMs: 5000 };
+    }
+    return { acceptMore: true, retryAfterMs: 0 };
+  };
+
+  const fsApi = new FakeFsApi();
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+      markdownIngestionPriorityMode: "mtime",
+    },
+    async () => rpc as never,
+    { error() {}, warn() {}, info() {} },
+    fsApi as never,
+  );
+
+  try {
+    await handle.start();
+
+    // First scan: newest file (firstPath) ingested, backpressure fires, cursor = secondPath
+    const afterFirstPass = rpc.calls.filter((call) => call.method === "ingest_markdown_document");
+    assert.equal(afterFirstPass.length, 1, "first file ingested before backpressure");
+    assert.equal(
+      (afterFirstPass[0].params as { sourceDoc: string }).sourceDoc,
+      firstPath,
+      "first ingested file is the newest file",
+    );
+
+    // Modify secondPath to trigger a watcher event; watcher clears cursor + timer
+    await fsp.writeFile(secondPath, "# Second\n\nModified to trigger watcher.");
+    await delay(50);
+
+    // Watcher-triggered full scan: firstPath unchanged (skip), secondPath changed → ingest
+    const allIngestCalls = rpc.calls.filter((call) => call.method === "ingest_markdown_document");
+    assert.equal(allIngestCalls.length, 2, "watcher-triggered scan does full re-scan from top");
+  } finally {
+    await handle.stop();
+  }
+});
+
+test("ingest feedback interface stores all 8 daemon fields without dropping any", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-feedback-"));
+  const filePath = path.join(tempRoot, "single.md");
+  await fsp.writeFile(filePath, "# Single\n\nOne file to test full feedback passthrough.");
+
+  const rpc = new FakeRpcClient();
+  rpc.feedbackSupplier = () => ({
+    queueDepth: 42,
+    queueCapacity: 100,
+    acceptMore: true,
+    retryAfterMs: 0,
+    processingTimeUs: 1234,
+    nodesAccepted: 5,
+    nodesRejected: 2,
+    tokensIngested: 3200,
+  });
+
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+    },
+    async () => rpc as never,
+    { error() {}, warn() {}, info() {} },
+  );
+
+  try {
+    await handle.start();
+
+    const ingestCalls = rpc.calls.filter((call) => call.method === "ingest_markdown_document");
+    assert.equal(ingestCalls.length, 1, "file should be ingested with full feedback present");
+    const callParams = ingestCalls[0].params as { sourceDoc: string };
+    assert.equal(callParams.sourceDoc, filePath, "correct file ingested");
+  } finally {
+    await handle.stop();
+  }
+});
+
+test("REPLACE and APPEND ingest modes are unaffected by feedback interface changes", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-ordinal-"));
+  const filePath = path.join(tempRoot, "append-guard.md");
+  await fsp.writeFile(filePath, "# Large\n\n" + "L".repeat(40000));
+
+  const rpc = new FakeRpcClient();
+  rpc.feedbackSupplier = () => ({
+    queueDepth: 5,
+    queueCapacity: 50,
+    acceptMore: true,
+    retryAfterMs: 0,
+    processingTimeUs: 900,
+    nodesAccepted: 3,
+    nodesRejected: 0,
+    tokensIngested: 1000,
+  });
+
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+      markdownIngestionSnapshotPath: snapshotPath(tempRoot),
+    },
+    async () => rpc as never,
+    { error() {}, warn() {}, info() {} },
+  );
+
+  try {
+    await handle.start();
+
+    const ingestCalls = rpc.calls.filter((call) => call.method === "ingest_markdown_document");
+    assert.equal(ingestCalls.length, 20, "large file should be split into multiple chunks");
+    assert.equal(
+      (ingestCalls[0].params as { mode: number }).mode,
+      0,
+      "first chunk should use REPLACE mode",
+    );
+    assert.equal(
+      (ingestCalls[1].params as { mode: number }).mode,
+      1,
+      "second chunk should use APPEND mode",
+    );
+  } finally {
+    await handle.stop();
+  }
+});
+
+test("markdown ingestion default-excludes dependency and build directories", async () => {
+  const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "libravdb-md-default-exclude-"));
+  const keepPath = path.join(tempRoot, "docs", "guide.md");
+  const nodeModulesPath = path.join(tempRoot, "node_modules", "pkg", "CHANGELOG.md");
+  const gitPath = path.join(tempRoot, ".git", "README.md");
+  const distPath = path.join(tempRoot, "dist", "README.md");
+  const nestedNodeModulesPath = path.join(tempRoot, "packages", "app", "node_modules", "pkg", "README.md");
+  const nestedBuildPath = path.join(tempRoot, "packages", "app", "build", "README.md");
+  await fsp.mkdir(path.dirname(keepPath), { recursive: true });
+  await fsp.mkdir(path.dirname(nodeModulesPath), { recursive: true });
+  await fsp.mkdir(path.dirname(gitPath), { recursive: true });
+  await fsp.mkdir(path.dirname(distPath), { recursive: true });
+  await fsp.mkdir(path.dirname(nestedNodeModulesPath), { recursive: true });
+  await fsp.mkdir(path.dirname(nestedBuildPath), { recursive: true });
+  await fsp.writeFile(keepPath, "# Keep\n\nUser-authored doc.");
+  await fsp.writeFile(nodeModulesPath, "# Changelog\n\nDependency docs.");
+  await fsp.writeFile(gitPath, "# Git internals\n\nVCS docs.");
+  await fsp.writeFile(distPath, "# Build output\n\nBuild artifact.");
+  await fsp.writeFile(nestedNodeModulesPath, "# Nested deps\n\nShould not ingest.");
+  await fsp.writeFile(nestedBuildPath, "# Nested build\n\nShould not ingest.");
+
+  const rpc = new FakeRpcClient();
+  const fsApi = new FakeFsApi();
+  const handle = createMarkdownIngestionHandle(
+    {
+      markdownIngestionEnabled: true,
+      markdownIngestionRoots: [tempRoot],
+      markdownIngestionDebounceMs: 0,
+    },
+    async () => rpc as never,
+    console,
+    fsApi as never,
+  );
+
+  await handle.start();
+
+  assert.equal(rpc.calls.filter((call) => call.method === "ingest_markdown_document").length, 1);
+  assert.equal(rpc.documents.has(keepPath), true);
+  assert.equal(rpc.documents.has(nodeModulesPath), false);
+  assert.equal(rpc.documents.has(gitPath), false);
+  assert.equal(rpc.documents.has(distPath), false);
+  assert.equal(rpc.documents.has(nestedNodeModulesPath), false);
+  assert.equal(rpc.documents.has(nestedBuildPath), false);
+
+  await handle.stop();
 });

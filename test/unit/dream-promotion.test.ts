@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { createDreamPromotionHandle, parseDreamPromotionCandidates, promoteDreamDiaryFile } from "../../src/dream-promotion.js";
+import { createDreamPromotionHandle, normalizeDiaryPath, parseDreamPromotionCandidates, promoteDreamDiaryFile } from "../../src/dream-promotion.js";
 
 test("dream promotion parser only accepts explicit deep-sleep candidate bullets", () => {
   const candidates = parseDreamPromotionCandidates(
@@ -32,6 +32,58 @@ test("dream promotion parser only accepts explicit deep-sleep candidate bullets"
   assert.equal(candidates[1]?.text, "too weak to promote");
 });
 
+test("dream promotion parser accepts explicit promotion candidate headings", () => {
+  const candidates = parseDreamPromotionCandidates(
+    [
+      "## Dream Promotion Candidates",
+      "- Keep dream promotion {score=0.82 recall=3 unique=2}",
+      "",
+      "## Promotion Candidates",
+      "- Keep promotion candidate {score=0.83 recall=4 unique=3}",
+      "",
+      "## Promote Candidates",
+      "- Keep promote candidate {score=0.84 recall=5 unique=4}",
+    ].join("\n"),
+  );
+
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.text),
+    ["Keep dream promotion", "Keep promotion candidate", "Keep promote candidate"],
+  );
+});
+
+test("dream promotion parser rejects substring-only section matches", () => {
+  const candidates = parseDreamPromotionCandidates(
+    [
+      "## Daydreaming",
+      "- Ignore daydreaming {score=0.9 recall=3 unique=2}",
+      "",
+      "## Dream Team",
+      "- Ignore dream team {score=0.9 recall=3 unique=2}",
+      "",
+      "## Dreaming of Refactors",
+      "- Ignore dreaming heading {score=0.9 recall=3 unique=2}",
+      "",
+      "## Promotional Content",
+      "- Ignore promotional content {score=0.9 recall=3 unique=2}",
+      "",
+      "## Promote Your Work",
+      "- Ignore promote your work {score=0.9 recall=3 unique=2}",
+      "",
+      "## Deep Sleepwalking",
+      "- Ignore deep sleepwalking {score=0.9 recall=3 unique=2}",
+      "",
+      "## Deep Sleep",
+      "- Keep explicit deep sleep {score=0.9 recall=3 unique=2}",
+    ].join("\n"),
+  );
+
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.text),
+    ["Keep explicit deep sleep"],
+  );
+});
+
 test("dream promotion parser rejects partially parsed numeric metadata", () => {
   const candidates = parseDreamPromotionCandidates(
     [
@@ -50,6 +102,16 @@ test("dream promotion parser rejects partially parsed numeric metadata", () => {
   assert.equal(candidates[0]?.uniqueQueries, 2);
 });
 
+import type { LibravDBClient } from "../../src/libravdb-client.js";
+
+function fakeClient(impl?: { promoteDreamEntries?: (params: unknown) => Promise<unknown> }) {
+  return {
+    async promoteDreamEntries(params: unknown) {
+      return impl?.promoteDreamEntries?.(params) ?? { promoted: 0 };
+    },
+  } as unknown as LibravDBClient;
+}
+
 test("disabled dream promotion does not validate unused diary paths", () => {
   assert.doesNotThrow(() => {
     createDreamPromotionHandle(
@@ -58,7 +120,7 @@ test("disabled dream promotion does not validate unused diary paths", () => {
         dreamPromotionDiaryPath: "/etc/passwd",
         dreamPromotionUserId: "fixed-user",
       },
-      async () => ({ call: async <T>() => ({ promoted: 0 }) as T }),
+      async () => fakeClient(),
     );
   });
 });
@@ -75,7 +137,7 @@ test("enabled dream promotion validates configured diary paths", () => {
           dreamPromotionDiaryPath: "/etc/passwd",
           dreamPromotionUserId: "fixed-user",
         },
-        async () => ({ call: async <T>() => ({ promoted: 0 }) as T }),
+        async () => fakeClient(),
       ),
       /must be within an allowed root/,
     );
@@ -89,13 +151,13 @@ test("enabled dream promotion validates configured diary paths", () => {
 });
 
 test("dream promotion rejects traversal and paths outside allowed roots", async () => {
-  const rpc = { call: async <T>() => ({ promoted: 0 }) as T };
+  const client = fakeClient();
   const previousStateDir = process.env.OPENCLAW_STATE_DIR;
   delete process.env.OPENCLAW_STATE_DIR;
 
   try {
     await assert.rejects(
-      () => promoteDreamDiaryFile(rpc, {
+      () => promoteDreamDiaryFile(client, {
         userId: "fixed-user",
         diaryPath: `${os.tmpdir()}/../etc/passwd`,
         text: "",
@@ -104,7 +166,7 @@ test("dream promotion rejects traversal and paths outside allowed roots", async 
     );
 
     await assert.rejects(
-      () => promoteDreamDiaryFile(rpc, {
+      () => promoteDreamDiaryFile(client, {
         userId: "fixed-user",
         diaryPath: "/etc/passwd",
         text: "",
@@ -121,13 +183,13 @@ test("dream promotion rejects traversal and paths outside allowed roots", async 
 });
 
 test("dream promotion accepts explicit diary files under an allowed root", async () => {
-  const calls: Array<{ method: string; params: unknown }> = [];
-  const rpc = {
-    call: async <T>(method: string, params: unknown): Promise<T> => {
-      calls.push({ method, params });
-      return { promoted: 1 } as T;
+  const calls: Array<{ params: unknown }> = [];
+  const client = fakeClient({
+    promoteDreamEntries: async (params: unknown) => {
+      calls.push({ params });
+      return { promoted: 1 };
     },
-  };
+  });
   const previousStateDir = process.env.OPENCLAW_STATE_DIR;
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "libravdb-state-"));
   process.env.OPENCLAW_STATE_DIR = stateDir;
@@ -135,7 +197,7 @@ test("dream promotion accepts explicit diary files under an allowed root", async
   try {
     const diaryPath = path.join(stateDir, "libravdb-dreams.md");
 
-    await promoteDreamDiaryFile(rpc, {
+    await promoteDreamDiaryFile(client, {
       userId: "fixed-user",
       diaryPath,
       text: [
@@ -157,4 +219,30 @@ test("dream promotion accepts explicit diary files under an allowed root", async
     }
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
+});
+
+test("normalizeDiaryPath expands ~ to home directory", () => {
+  const result = normalizeDiaryPath("~/dreams.md");
+  assert.ok(!result.includes("/~/"), `path should not contain literal "~" directory: ${result}`);
+  assert.ok(result.includes("/dreams.md"), `path should end with /dreams.md: ${result}`);
+});
+
+test("normalizeDiaryPath expands ~subpath correctly", () => {
+  const result = normalizeDiaryPath("~/sub/path.md");
+  assert.ok(!result.includes("/~/"), `path should not contain literal "~" directory: ${result}`);
+  assert.ok(result.endsWith("/sub/path.md"), `path should preserve subpath: ${result}`);
+});
+
+test("normalizeDiaryPath rejects .. traversal", () => {
+  assert.throws(
+    () => normalizeDiaryPath("/tmp/../etc/passwd"),
+    /traversal/,
+  );
+});
+
+test("normalizeDiaryPath rejects paths outside allowed roots", () => {
+  assert.throws(
+    () => normalizeDiaryPath("/tmp/diary.md"),
+    /allowed root/,
+  );
 });

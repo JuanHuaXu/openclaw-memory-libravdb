@@ -8,6 +8,7 @@ import {
   mkdirSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
+import { execSync } from "node:child_process";
 import type { LoggerLike } from "./types.js";
 
 /**
@@ -96,8 +97,20 @@ function writeIdentityFile(path: string, userId: string, parts: DerivedParts): v
   mkdirSync(dir, { recursive: true });
 
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-  writeFileSync(tmp, JSON.stringify(identity, null, 2) + "\n");
+  writeFileSync(tmp, JSON.stringify(identity, null, 2) + "\n", { mode: 0o600 });
   renameSync(tmp, path);
+
+  // POSIX mode bits are advisory on Windows — enforce owner-only access via ACLs.
+  if (process.platform === "win32") {
+    try {
+      execSync(
+        `icacls "${path}" /inheritance:r /grant:r "%USERNAME%:(R,W)"`,
+        { stdio: "ignore", timeout: 5000 },
+      );
+    } catch {
+      // best-effort; the file is already written with 0o600
+    }
+  }
 }
 
 export function resolveIdentity(params: {

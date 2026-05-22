@@ -14,13 +14,13 @@ const DEFAULT_MIN_UNIQUE_QUERIES = 2;
 const DREAM_PROMOTION_VERSION = 1;
 const DREAM_SOURCE_KIND = "dream";
 
+import type { PartialMessage } from "@bufbuild/protobuf";
+import type { DreamPromotionEntry as ProtoEntry } from "@xdarkicex/libravdb-contracts";
+import type { LibravDBClient } from "./libravdb-client.js";
+
 type Disposable = { close(): void };
 
-interface RpcLike {
-  call<T>(method: string, params: unknown): Promise<T>;
-}
-
-type RpcGetterLike = () => Promise<RpcLike>;
+type ClientGetterLike = () => Promise<LibravDBClient>;
 
 interface FsWatcherLike extends Disposable {
   on(event: "error", handler: (error: Error) => void): void;
@@ -85,7 +85,7 @@ interface DreamPromotionState {
 
 export function createDreamPromotionHandle(
   cfg: PluginConfig,
-  getRpc: RpcGetterLike,
+  getClient: ClientGetterLike,
   logger: LoggerLike = console,
   fsApi: FsApi = createRealFsApi(),
 ): DreamPromotionHandle {
@@ -201,24 +201,28 @@ export function createDreamPromotionHandle(
       return;
     }
 
-    const rpc = await getRpc();
-    const params: DreamPromotionParams = {
+    const client = await getClient();
+    await client.promoteDreamEntries({
       userId,
       sourceDoc: diaryPath,
       sourceRoot: path.dirname(diaryPath),
       sourcePath: path.basename(diaryPath),
       sourceKind: DREAM_SOURCE_KIND,
       fileHash,
-      sourceSize: stat.size,
-      sourceMtimeMs: stat.mtimeMs,
+      sourceSize: BigInt(stat.size),
+      sourceMtimeMs: BigInt(Math.trunc(stat.mtimeMs)),
       ingestVersion: DREAM_PROMOTION_VERSION,
       hashBackend: getHashBackendName(),
-      entries: candidates.map((candidate) => ({
-        ...candidate,
+      entries: candidates.map((candidate): PartialMessage<ProtoEntry> => ({
+        text: candidate.text,
+        score: candidate.score,
+        recallCount: candidate.recallCount,
+        uniqueQueries: candidate.uniqueQueries,
+        section: candidate.section,
+        line: candidate.line,
         sourceLine: candidate.line,
       })),
-    };
-    await rpc.call<DreamPromotionResult>("promote_dream_entries", params);
+    });
 
     lastFileState = {
       size: stat.size,
@@ -272,7 +276,7 @@ export function createDreamPromotionHandle(
 }
 
 export async function promoteDreamDiaryFile(
-  rpc: RpcLike,
+  client: LibravDBClient,
   opts: {
     userId: string;
     diaryPath: string;
@@ -305,19 +309,24 @@ export async function promoteDreamDiaryFile(
   }
 
   const candidates = parseDreamPromotionCandidates(text);
-  return await rpc.call<DreamPromotionResult>("promote_dream_entries", {
+  return await client.promoteDreamEntries({
     userId,
     sourceDoc: diaryPath,
     sourceRoot: path.dirname(diaryPath),
     sourcePath: path.basename(diaryPath),
     sourceKind: DREAM_SOURCE_KIND,
     fileHash: fileHash ?? "",
-    sourceSize: sourceSize ?? 0,
-    sourceMtimeMs: sourceMtimeMs ?? 0,
+    sourceSize: BigInt(sourceSize ?? 0),
+    sourceMtimeMs: BigInt(Math.trunc(sourceMtimeMs ?? 0)),
     ingestVersion: DREAM_PROMOTION_VERSION,
     hashBackend: getHashBackendName(),
-    entries: candidates.map((candidate) => ({
-      ...candidate,
+    entries: candidates.map((candidate): PartialMessage<ProtoEntry> => ({
+      text: candidate.text,
+      score: candidate.score,
+      recallCount: candidate.recallCount,
+      uniqueQueries: candidate.uniqueQueries,
+      section: candidate.section,
+      line: candidate.line,
       sourceLine: candidate.line,
     })),
   });
@@ -386,7 +395,7 @@ function parseHeading(value: string): string | null {
 }
 
 function isPromotionSection(section: string): boolean {
-  return section.includes("deep sleep") || section.includes("promot") || section.includes("dream");
+  return /^(?:deep sleep|dream promotion(?: candidates?)?|promotion candidates?|promote candidates?)$/.test(section);
 }
 
 function parseBulletCandidate(line: string): { body: string } | null {
@@ -476,22 +485,28 @@ function normalizeSectionName(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function normalizeDiaryPath(value?: string): string {
+export function normalizeDiaryPath(value?: string): string {
   const trimmed = value?.trim();
   if (!trimmed) {
     return "";
   }
 
+  // Expand ~ to home directory before resolving. path.resolve does not
+  // expand tilde, so "~/dreams.md" would resolve to "<cwd>/~/dreams.md".
+  const expanded = trimmed.startsWith("~")
+    ? path.join(os.homedir(), trimmed.slice(1))
+    : trimmed;
+
   // Reject traversal components — even though path.resolve collapses them,
   // their presence signals an attempt to escape intended boundaries.
-  const segments = trimmed.split(/[/\\]+/);
+  const segments = expanded.split(/[/\\]+/);
   if (segments.some((s) => s === "..")) {
     throw new Error(
       `dream diary path must not contain ".." traversal: ${trimmed}`,
     );
   }
 
-  const resolved = path.resolve(trimmed);
+  const resolved = path.resolve(expanded);
 
   // Restrict to known-safe locations to prevent arbitrary file reads.
   // Allowed roots: home directory and the configured OpenClaw state dir.

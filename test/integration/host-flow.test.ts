@@ -66,8 +66,31 @@ function buildContextEngineFactory(
   cfg: Parameters<typeof createContextEngineFactory>[1],
   logger: LoggerLike = NOOP_LOGGER,
 ) {
+  const rpcPromise = getRpc();
   const runtime = {
-    getRpc,
+    getClient: async () => {
+      const rpc = await rpcPromise;
+      return {
+        async bootstrapSessionKernel(params: any) {
+          return rpc.call("bootstrap_session_kernel", params);
+        },
+        async ingestMessageKernel(params: any) {
+          return rpc.call("ingest_message_kernel", params);
+        },
+        async afterTurnKernel(params: any) {
+          return rpc.call("after_turn_kernel", params);
+        },
+        async compactSession(params: any) {
+          return rpc.call("compact_session", params);
+        },
+        async assembleContextInternal(params: any) {
+          return rpc.call("assemble_context_internal", params);
+        },
+        async searchTextCollections(params: any) {
+          return rpc.call("search_text_collections", params);
+        },
+      };
+    },
     getKernel: async () => null,
     emitLifecycleHint: async () => {},
     onShutdown: () => {},
@@ -191,10 +214,13 @@ test("assemble passes correct configuration mapping and returns expected payload
   assert.equal(params.config.recoveryMinConfidenceMean, 0.42);
   assert.equal(params.emitDebug, true);
 
-  // Verify inbound response handling
-  assert.equal(assembled.estimatedTokens, 150);
+  // Verify inbound response handling — user turn is reinjected for replay safety
+  assert.ok(assembled.estimatedTokens >= 150);
   assert.equal(assembled.systemPromptAddition, "<recalled_memories>static memory data</recalled_memories>");
-  assert.deepEqual(assembled.messages, [{ role: "assistant", content: "Mocked recalled context" }]);
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "what do you remember?" },
+    { role: "assistant", content: "Mocked recalled context" },
+  ]);
   assert.equal(assembled.debug?.recoveryTriggerFired, true);
 });
 
@@ -221,7 +247,7 @@ test("assemble clamps oversized daemon context to token budget", async () => {
   });
 
   assert.ok(assembled.estimatedTokens <= 256);
-  assert.ok(assembled.messages.length <= 1);
+  assert.equal(assembled.messages[0]?.role, "user");
 });
 
 test("assemble fail-closed on sidecar errors with budget-clamped fallback", async () => {
@@ -243,9 +269,11 @@ test("assemble fail-closed on sidecar errors with budget-clamped fallback", asyn
   });
 
   assert.ok(assembled.estimatedTokens <= 256);
+  // User turn reinjection takes priority; when the fallback user dominates the
+  // budget, downstream tool_calls may be dropped to preserve the user turn.
   assert.ok(assembled.messages.length >= 1);
+  assert.equal(assembled.messages[0]?.role, "user");
   assert.equal(assembled.systemPromptAddition, "");
-  assert.equal(assembled.messages.at(-1)?.tool_calls, toolCalls);
 });
 
 test("assemble triggers force compaction at dynamic 80% threshold before daemon assembly", async () => {

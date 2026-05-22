@@ -2,7 +2,7 @@
   "id": "libravdb-memory",
   "name": "LibraVDB Memory",
   "description": "Persistent vector memory with three-tier hybrid scoring",
-  "version": "1.5.4",
+  "version": "1.6.12",
   "kind": [
     "memory",
     "context-engine"
@@ -239,6 +239,21 @@
       },
       "markdownIngestionObsidianExclude": {
         "type": "array",
+        "default": [
+          "**/node_modules/**",
+          "**/.git/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/coverage/**",
+          "**/.next/**",
+          "**/.nuxt/**",
+          "**/.svelte-kit/**",
+          "**/.turbo/**",
+          "**/.cache/**",
+          "**/.venv/**",
+          "**/venv/**",
+          "**/__pycache__/**"
+        ],
         "items": {
           "type": "string"
         }
@@ -255,6 +270,21 @@
       },
       "markdownIngestionExclude": {
         "type": "array",
+        "default": [
+          "**/node_modules/**",
+          "**/.git/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/coverage/**",
+          "**/.next/**",
+          "**/.nuxt/**",
+          "**/.svelte-kit/**",
+          "**/.turbo/**",
+          "**/.cache/**",
+          "**/.venv/**",
+          "**/venv/**",
+          "**/__pycache__/**"
+        ],
         "items": {
           "type": "string"
         }
@@ -262,6 +292,20 @@
       "markdownIngestionDebounceMs": {
         "type": "number",
         "default": 150
+      },
+      "markdownIngestionPriorityMode": {
+        "type": "string",
+        "enum": [
+          "mtime",
+          "ctime",
+          "size",
+          "fifo"
+        ],
+        "default": "mtime"
+      },
+      "markdownIngestionMaxTokensPerFile": {
+        "type": "number",
+        "default": 128000
       },
       "markdownIngestionSnapshotPath": {
         "type": "string"
