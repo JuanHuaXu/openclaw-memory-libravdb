@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildContextEngineFactory } from "../../src/context-engine.js";
 import fs from "node:fs";
+import { execSync } from "node:child_process";
 import { resolveIdentity } from "../../src/identity.js";
 import type { PluginConfig, SearchResult } from "../../src/types.js";
 import type { PluginRuntime } from "../../src/plugin-runtime.js";
@@ -865,9 +866,31 @@ test("resolveIdentity creates identity file with owner-only permissions", () => 
   try {
     resolveIdentity({ identityPath });
     assert.ok(fs.existsSync(identityPath), "identity file should exist");
-    const stat = fs.statSync(identityPath);
-    const mode = stat.mode & 0o777;
-    assert.equal(mode & 0o077, 0, `identity file should not be group/world readable, got ${mode.toString(8)}`);
+
+    if (process.platform === "win32") {
+      // POSIX mode bits are advisory on Windows — verify the ACL is restricted
+      // to the current user via icacls output.
+      const acls = execSync(`icacls "${identityPath}"`, { encoding: "utf8" });
+      // A locked-down file has no inherited ACEs and grants only the owner.
+      assert.ok(
+        acls.includes("(R,W)"),
+        `identity file ACLs should grant (R,W) to owner, got:\n${acls}`,
+      );
+      // After /inheritance:r, there should be no inherited entries.
+      assert.equal(
+        acls.includes("BUILTIN"),
+        false,
+        `identity file ACLs should not include built-in principals, got:\n${acls}`,
+      );
+    } else {
+      const stat = fs.statSync(identityPath);
+      const mode = stat.mode & 0o777;
+      assert.equal(
+        mode & 0o077,
+        0,
+        `identity file should not be group/world readable, got ${mode.toString(8)}`,
+      );
+    }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
