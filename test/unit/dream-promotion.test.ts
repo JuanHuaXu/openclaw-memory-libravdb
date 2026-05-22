@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { createDreamPromotionHandle, parseDreamPromotionCandidates, promoteDreamDiaryFile } from "../../src/dream-promotion.js";
+import { createDreamPromotionHandle, normalizeDiaryPath, parseDreamPromotionCandidates, promoteDreamDiaryFile } from "../../src/dream-promotion.js";
 
 test("dream promotion parser only accepts explicit deep-sleep candidate bullets", () => {
   const candidates = parseDreamPromotionCandidates(
@@ -167,4 +167,30 @@ test("dream promotion accepts explicit diary files under an allowed root", async
     }
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
+});
+
+test("normalizeDiaryPath expands ~ to home directory", () => {
+  const result = normalizeDiaryPath("~/dreams.md");
+  assert.ok(!result.includes("/~/"), `path should not contain literal "~" directory: ${result}`);
+  assert.ok(result.includes("/dreams.md"), `path should end with /dreams.md: ${result}`);
+});
+
+test("normalizeDiaryPath expands ~subpath correctly", () => {
+  const result = normalizeDiaryPath("~/sub/path.md");
+  assert.ok(!result.includes("/~/"), `path should not contain literal "~" directory: ${result}`);
+  assert.ok(result.endsWith("/sub/path.md"), `path should preserve subpath: ${result}`);
+});
+
+test("normalizeDiaryPath rejects .. traversal", () => {
+  assert.throws(
+    () => normalizeDiaryPath("/tmp/../etc/passwd"),
+    /traversal/,
+  );
+});
+
+test("normalizeDiaryPath rejects paths outside allowed roots", () => {
+  assert.throws(
+    () => normalizeDiaryPath("/tmp/diary.md"),
+    /allowed root/,
+  );
 });

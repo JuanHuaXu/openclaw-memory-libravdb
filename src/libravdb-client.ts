@@ -5,6 +5,8 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import { LibravDB } from "@xdarkicex/libravdb-contracts/client";
 import { createHmac } from "node:crypto";
 import fs from "node:fs";
+import type { LoggerLike } from "./types.js";
+import { formatError } from "./format-error.js";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -438,14 +440,15 @@ function extractHost(target: string): string {
   return sep > 0 ? withoutDns.slice(0, sep) : withoutDns;
 }
 
-export function loadSecretFromEnv(): string | undefined {
+export function loadSecretFromEnv(logger?: LoggerLike): string | undefined {
   const secret = process.env.LIBRAVDB_AUTH_SECRET?.trim();
   if (secret) return secret;
   const secretPath = process.env.LIBRAVDB_AUTH_SECRET_FILE;
   if (secretPath) {
     try {
       return fs.readFileSync(secretPath, "utf8").trim() || undefined;
-    } catch {
+    } catch (error) {
+      logger?.warn?.(`LibraVDB: failed to read auth secret file "${secretPath}": ${formatError(error)}`);
       return undefined;
     }
   }
