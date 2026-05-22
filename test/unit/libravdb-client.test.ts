@@ -9,6 +9,7 @@ import {
   createAuthInterceptor,
   LibravDBClient,
   loadSecretFromEnv,
+  loadSecretFromEnv,
 } from "../../src/libravdb-client.js";
 
 import type { AuthInterceptorState } from "../../src/libravdb-client.js";
@@ -261,4 +262,33 @@ test("no auth headers without secret", async () => {
   }))({ method: { name: "Status" }, header } as any);
 
   assert.equal(sent.has("x-libravdb-auth"), false);
+});
+
+test("loadSecretFromEnv returns undefined when no env vars are set", () => {
+  const result = loadSecretFromEnv();
+  assert.equal(result, undefined);
+});
+
+test("loadSecretFromEnv returns secret from LIBRAVDB_AUTH_SECRET", () => {
+  process.env.LIBRAVDB_AUTH_SECRET = "test-secret-123";
+  try {
+    const result = loadSecretFromEnv();
+    assert.equal(result, "test-secret-123");
+  } finally {
+    delete process.env.LIBRAVDB_AUTH_SECRET;
+  }
+});
+
+test("loadSecretFromEnv warns and returns undefined for unreadable file", () => {
+  const warnings: string[] = [];
+  const logger = { error: () => {}, warn: (msg: string) => warnings.push(msg), info: () => {}, debug: () => {} };
+  process.env.LIBRAVDB_AUTH_SECRET_FILE = "/nonexistent/path/secret";
+  try {
+    const result = loadSecretFromEnv(logger);
+    assert.equal(result, undefined);
+    assert.ok(warnings.length > 0, "should have logged at least one warning");
+    assert.match(warnings[0], /failed to read auth secret file/);
+  } finally {
+    delete process.env.LIBRAVDB_AUTH_SECRET_FILE;
+  }
 });

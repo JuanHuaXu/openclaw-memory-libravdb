@@ -485,22 +485,28 @@ function normalizeSectionName(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function normalizeDiaryPath(value?: string): string {
+export function normalizeDiaryPath(value?: string): string {
   const trimmed = value?.trim();
   if (!trimmed) {
     return "";
   }
 
+  // Expand ~ to home directory before resolving. path.resolve does not
+  // expand tilde, so "~/dreams.md" would resolve to "<cwd>/~/dreams.md".
+  const expanded = trimmed.startsWith("~")
+    ? path.join(os.homedir(), trimmed.slice(1))
+    : trimmed;
+
   // Reject traversal components — even though path.resolve collapses them,
   // their presence signals an attempt to escape intended boundaries.
-  const segments = trimmed.split(/[/\\]+/);
+  const segments = expanded.split(/[/\\]+/);
   if (segments.some((s) => s === "..")) {
     throw new Error(
       `dream diary path must not contain ".." traversal: ${trimmed}`,
     );
   }
 
-  const resolved = path.resolve(trimmed);
+  const resolved = path.resolve(expanded);
 
   // Restrict to known-safe locations to prevent arbitrary file reads.
   // Allowed roots: home directory and the configured OpenClaw state dir.
