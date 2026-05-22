@@ -79,6 +79,7 @@ interface DreamFileState {
 interface DreamPromotionState {
   watching: boolean;
   dirty: boolean;
+  scanning: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   watcher: FsWatcherLike | null;
 }
@@ -110,6 +111,7 @@ export function createDreamPromotionHandle(
   const state: DreamPromotionState = {
     watching: false,
     dirty: false,
+    scanning: false,
     timer: null,
     watcher: null,
   };
@@ -146,6 +148,10 @@ export function createDreamPromotionHandle(
     if (!state.watching) {
       return;
     }
+    if (state.scanning) {
+      state.dirty = true;
+      return;
+    }
     if (state.timer) {
       state.dirty = true;
       return;
@@ -162,6 +168,20 @@ export function createDreamPromotionHandle(
     if (!state.watching) {
       return;
     }
+    state.scanning = true;
+    try {
+      await performScan();
+    } finally {
+      state.scanning = false;
+    }
+
+    if (state.dirty) {
+      state.dirty = false;
+      await refreshDiary();
+    }
+  }
+
+  async function performScan(): Promise<void> {
     await ensureWatcher();
 
     const stat = await safeStat(diaryPath);
@@ -229,11 +249,6 @@ export function createDreamPromotionHandle(
       mtimeMs: stat.mtimeMs,
       fileHash,
     };
-
-    if (state.dirty) {
-      state.dirty = false;
-      await refreshDiary();
-    }
   }
 
   async function safeStat(filePath: string): Promise<{ size: number; mtimeMs: number } | null> {
