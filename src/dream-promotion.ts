@@ -170,73 +170,7 @@ export function createDreamPromotionHandle(
     }
     state.scanning = true;
     try {
-      await ensureWatcher();
-
-      const stat = await safeStat(diaryPath);
-      if (!stat) {
-        lastFileState = null;
-        return;
-      }
-
-      if (lastFileState && lastFileState.size === stat.size && lastFileState.mtimeMs === stat.mtimeMs) {
-        return;
-      }
-
-      const bytes = await safeReadFile(diaryPath);
-      if (!bytes) {
-        lastFileState = null;
-        return;
-      }
-
-      const fileHash = hashBytes(bytes);
-      if (lastFileState && lastFileState.fileHash === fileHash) {
-        lastFileState = {
-          size: stat.size,
-          mtimeMs: stat.mtimeMs,
-          fileHash,
-        };
-        return;
-      }
-
-      const text = textDecoder.decode(bytes);
-      const candidates = parseDreamPromotionCandidates(text);
-      if (candidates.length === 0) {
-        lastFileState = {
-          size: stat.size,
-          mtimeMs: stat.mtimeMs,
-          fileHash,
-        };
-        return;
-      }
-
-      const client = await getClient();
-      await client.promoteDreamEntries({
-        userId,
-        sourceDoc: diaryPath,
-        sourceRoot: path.dirname(diaryPath),
-        sourcePath: path.basename(diaryPath),
-        sourceKind: DREAM_SOURCE_KIND,
-        fileHash,
-        sourceSize: BigInt(stat.size),
-        sourceMtimeMs: BigInt(Math.trunc(stat.mtimeMs)),
-        ingestVersion: DREAM_PROMOTION_VERSION,
-        hashBackend: getHashBackendName(),
-        entries: candidates.map((candidate): PartialMessage<ProtoEntry> => ({
-          text: candidate.text,
-          score: candidate.score,
-          recallCount: candidate.recallCount,
-          uniqueQueries: candidate.uniqueQueries,
-          section: candidate.section,
-          line: candidate.line,
-          sourceLine: candidate.line,
-        })),
-      });
-
-      lastFileState = {
-        size: stat.size,
-        mtimeMs: stat.mtimeMs,
-        fileHash,
-      };
+      await performScan();
     } finally {
       state.scanning = false;
     }
@@ -245,6 +179,76 @@ export function createDreamPromotionHandle(
       state.dirty = false;
       await refreshDiary();
     }
+  }
+
+  async function performScan(): Promise<void> {
+    await ensureWatcher();
+
+    const stat = await safeStat(diaryPath);
+    if (!stat) {
+      lastFileState = null;
+      return;
+    }
+
+    if (lastFileState && lastFileState.size === stat.size && lastFileState.mtimeMs === stat.mtimeMs) {
+      return;
+    }
+
+    const bytes = await safeReadFile(diaryPath);
+    if (!bytes) {
+      lastFileState = null;
+      return;
+    }
+
+    const fileHash = hashBytes(bytes);
+    if (lastFileState && lastFileState.fileHash === fileHash) {
+      lastFileState = {
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        fileHash,
+      };
+      return;
+    }
+
+    const text = textDecoder.decode(bytes);
+    const candidates = parseDreamPromotionCandidates(text);
+    if (candidates.length === 0) {
+      lastFileState = {
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        fileHash,
+      };
+      return;
+    }
+
+    const client = await getClient();
+    await client.promoteDreamEntries({
+      userId,
+      sourceDoc: diaryPath,
+      sourceRoot: path.dirname(diaryPath),
+      sourcePath: path.basename(diaryPath),
+      sourceKind: DREAM_SOURCE_KIND,
+      fileHash,
+      sourceSize: BigInt(stat.size),
+      sourceMtimeMs: BigInt(Math.trunc(stat.mtimeMs)),
+      ingestVersion: DREAM_PROMOTION_VERSION,
+      hashBackend: getHashBackendName(),
+      entries: candidates.map((candidate): PartialMessage<ProtoEntry> => ({
+        text: candidate.text,
+        score: candidate.score,
+        recallCount: candidate.recallCount,
+        uniqueQueries: candidate.uniqueQueries,
+        section: candidate.section,
+        line: candidate.line,
+        sourceLine: candidate.line,
+      })),
+    });
+
+    lastFileState = {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      fileHash,
+    };
   }
 
   async function safeStat(filePath: string): Promise<{ size: number; mtimeMs: number } | null> {
