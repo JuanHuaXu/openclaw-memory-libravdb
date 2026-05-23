@@ -35,7 +35,14 @@ brew services start libravdbd
 
 > **After upgrades:** Always restart the daemon so the newly installed binary takes effect:
 > ```bash
+> # macOS (Homebrew)
 > brew services restart libravdbd
+>
+> # Linux (systemd)
+> systemctl --user restart libravdbd
+>
+> # Linux (no systemd — kill and restart manually)
+> killall libravdbd && libravdbd &
 > ```
 > Failing to restart leaves the old process running — it will not auto-replace a live background service. If you see "Protocol error" or connection failures after an upgrade, this is almost always the cause.
 
