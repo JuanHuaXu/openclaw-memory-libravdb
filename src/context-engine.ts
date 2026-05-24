@@ -267,6 +267,18 @@ function resolvePredictiveCompactionTarget(params: {
     : Math.max(1, currentTokenCount - 1);
 }
 
+function readRuntimeNumber(
+  runtimeContext: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  const value = runtimeContext?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isManualCompactionRequested(runtimeContext: Record<string, unknown> | undefined): boolean {
+  return runtimeContext?.manualCompaction === true;
+}
+
 function logPredictiveCompactionAttempt(params: {
   logger: LoggerLike;
   phase: "assemble" | "afterTurn";
@@ -1264,8 +1276,47 @@ export function buildContextEngineFactory(
       targetSize?: number;
       tokenBudget?: number;
       currentTokenCount?: number;
+      compactionTarget?: "budget" | "threshold";
+      runtimeContext?: Record<string, unknown>;
+      abortSignal?: AbortSignal;
     }) {
-      return await runCompaction(args);
+      const tokenBudget =
+        normalizeTokenBudget(args.tokenBudget) ??
+        normalizeTokenBudget(readRuntimeNumber(args.runtimeContext, "tokenBudget"));
+      const currentTokenCount =
+        normalizeCurrentTokenCount(args.currentTokenCount) ??
+        normalizeCurrentTokenCount(readRuntimeNumber(args.runtimeContext, "currentTokenCount"));
+      const forceCompaction = args.force === true || isManualCompactionRequested(args.runtimeContext);
+      const threshold = getDynamicCompactThreshold(tokenBudget);
+      if (
+        !forceCompaction &&
+        currentTokenCount != null &&
+        threshold != null &&
+        currentTokenCount < threshold
+      ) {
+        return {
+          ok: true,
+          compacted: false,
+          reason: "below threshold",
+          result: {
+            tokensBefore: currentTokenCount,
+            details: {
+              threshold,
+              targetTokens: args.compactionTarget === "threshold" ? threshold : tokenBudget,
+            },
+          },
+        };
+      }
+      const runArgs: Parameters<typeof runCompaction>[0] = {
+        ...args,
+        force: forceCompaction || args.force,
+        ...(tokenBudget != null ? { tokenBudget } : {}),
+        ...(currentTokenCount != null ? { currentTokenCount } : {}),
+        ...(args.compactionTarget === "threshold" && threshold != null
+          ? { targetSize: threshold }
+          : {}),
+      };
+      return await runCompaction(runArgs);
     },
     async afterTurn(args: {
       sessionId: string;
