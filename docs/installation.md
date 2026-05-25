@@ -20,7 +20,7 @@ Resource sizing and benchmark data live in
 
 OpenClaw compatibility note:
 
-- the plugin is currently verified against OpenClaw `2026.4.23`
+- the plugin is currently verified against OpenClaw `2026.5.22`
 
 ## Install Flow
 
@@ -185,7 +185,7 @@ Expected output shape:
 
 ```text
 ┌────────────────────┬──────────────────────────────┐
-│ Sidecar            │ running                      │
+│ Daemon             │ running                      │
 │ Turns stored       │ 0                            │
 │ Memories stored    │ 0                            │
 │ Lifecycle hints    │ 0                            │
@@ -198,7 +198,7 @@ Expected output shape:
 
 Interpretation:
 
-- `Sidecar=running` means the daemon answered the health check.
+- `Daemon=running` means the daemon answered the health check.
 - `Gate threshold=0.35` confirms the default durable-memory gate.
 - `Abstractive model=not provisioned` is acceptable; compaction falls back to
   the extractive path.

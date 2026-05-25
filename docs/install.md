@@ -6,7 +6,7 @@ daemon endpoint when you need a non-default location.
 
 OpenClaw compatibility note:
 
-- the plugin is currently verified against OpenClaw `2026.4.23`
+- the plugin is currently verified against OpenClaw `2026.5.22`
 
 For deeper operational detail, use the full
 [installation reference](./installation.md).

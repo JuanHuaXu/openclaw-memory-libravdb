@@ -29,7 +29,7 @@ your standard OpenClaw plugin removal flow for
 
 ## 2. Stop the Daemon
 
-Stop the sidecar before deleting binaries or stored data.
+Stop the daemon before deleting binaries or stored data.
 
 Homebrew:
 

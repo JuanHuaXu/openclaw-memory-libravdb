@@ -7,7 +7,7 @@ commands.
 ## Markdown Ingestion
 
 LibraVDB Memory can watch markdown roots and sync changed notes into vector
-memory without changing the sidecar RPC contract.
+memory without changing the daemon gRPC interface.
 
 The built-in source adapters are:
 
@@ -78,7 +78,7 @@ Each promoted bullet should include trailing metadata with the gating fields:
 - Preserve the recent tail buffer {score=0.82 recall=3 unique=2}
 ```
 
-Only bullets that satisfy the sidecar gates are inserted. The dream collection
+Only bullets that satisfy the daemon gates are inserted. The dream collection
 is isolated from normal `user:` and `global` retrieval by default, and dream
 phrasing in chat or search queries routes there automatically.
 
@@ -109,7 +109,7 @@ openclaw memory dream-promote --user-id <userId> --dream-file ~/DREAMS.md
 ```
 
 Dream diary files must live under the operator's home directory or the configured
-`OPENCLAW_STATE_DIR`. The manual command and watcher both use the same sidecar
+`OPENCLAW_STATE_DIR`. The manual command and watcher both use the same daemon
 promotion RPC, so admission gates and provenance metadata are identical.
 
 ## Memory CLI
@@ -119,14 +119,14 @@ CLI API.
 
 | Command | Purpose |
 |---|---|
-| `openclaw memory status` | Show sidecar health, counts, active thresholds, and model readiness. Use `--deep` to probe authored collection search health. |
-| `openclaw memory index --force` | Refresh delegated sidecar index state for OpenClaw memory CLI compatibility. |
+| `openclaw memory status` | Show daemon health, counts, active thresholds, and model readiness. Use `--deep` to probe authored collection search health. |
+| `openclaw memory index --force` | Refresh delegated daemon index state for OpenClaw memory CLI compatibility. |
 | `openclaw memory search "query"` | Search LibraVDB memory through the active memory runtime bridge. |
 | `openclaw memory export --user-id <userId>` | Stream stored memories as newline-delimited JSON for one durable namespace. |
 | `openclaw memory export --session-key <sessionKey>` | Export a namespace derived from a session key. |
 | `openclaw memory flush --user-id <userId>` | Delete one durable user namespace after confirmation. |
 | `openclaw memory flush --session-key <sessionKey>` | Delete a namespace derived from a session key after confirmation. |
-| `openclaw memory journal --limit 50` | Inspect bounded lifecycle hints recorded by the sidecar. |
+| `openclaw memory journal --limit 50` | Inspect bounded lifecycle hints recorded by the daemon. |
 | `openclaw memory dream-promote --user-id <userId> --dream-file <path>` | Promote vetted dream diary bullets from a file under the operator home directory or `OPENCLAW_STATE_DIR`. |
 
 Use `--yes` with `flush` only when you intentionally want to skip the

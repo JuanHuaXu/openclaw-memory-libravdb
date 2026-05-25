@@ -14,7 +14,7 @@
 `@xdarkicex/openclaw-memory-libravdb` is a local-first OpenClaw memory plugin
 backed by the `libravdbd` vector service. It replaces the lightweight default memory
 path with scoped session, user, and global memory; continuity-aware prompt
-assembly; durable recall; and sidecar-owned compaction.
+assembly; durable recall; and daemon-owned compaction.
 
 [Install](./docs/install.md) · [Full installation reference](./docs/installation.md) · [Architecture](./docs/architecture.md) · [Security](./docs/security.md) · [Performance and tuning](./docs/performance-and-tuning.md) · [Contributing](./docs/contributing.md)
 
@@ -109,7 +109,7 @@ Runtime requirements:
 
 Compatibility note:
 
-- this plugin is currently verified against OpenClaw `2026.4.23`
+- this plugin is currently verified against OpenClaw `2026.5.22`
 
 Default endpoints:
 
@@ -139,7 +139,7 @@ If your service runs elsewhere, set `sidecarPath`:
 - **Memory capability ownership** - owns the OpenClaw `memory` slot and
   registers the context engine capability at runtime.
 - **Memory runtime bridge** - routes built-in `memory_search` calls to the same
-  libraVDB-backed sidecar on hosts that expose the runtime API.
+  libraVDB-backed daemon on hosts that expose the runtime API.
 - **Three memory scopes** - keeps active session, durable user, and global memory
   separate.
 - **Hybrid retrieval** - blends semantic similarity, scope, recency, and summary

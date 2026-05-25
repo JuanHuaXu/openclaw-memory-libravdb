@@ -10,7 +10,7 @@ LibraVDB Memory is split into two cooperating pieces:
 
 - a TypeScript OpenClaw plugin that owns the `memory` slot and registers
   context-engine capability at runtime
-- a Go sidecar daemon that owns storage, retrieval, and compaction
+- a Go daemon that owns storage, retrieval, and compaction
 
 The plugin keeps the host integration light and stable. The daemon keeps the
 data path local-first and handles the expensive memory operations outside the
@@ -47,7 +47,7 @@ main retrieval path.
 
 ### `ingest`
 
-Session messages are written into the sidecar-backed store. User turns may also
+Session messages are written into the daemon-backed store. User turns may also
 be promoted into durable user memory after gating.
 
 ### `assemble`
@@ -72,7 +72,7 @@ thresholds, compaction declines instead of forcing a rewrite.
 - retrieval happens in `assemble`
 - compaction is separate from prompt construction
 - lifecycle hints such as `before_reset` and `session_end` are advisory
-- the sidecar is the source of truth for stored memory state
+- the daemon is the source of truth for stored memory state
 
 ## Failure Handling
 
@@ -93,5 +93,5 @@ This architecture keeps the host integration simple while still supporting:
 - explicit compaction
 - local-first storage and retrieval
 
-In short, the plugin owns the lifecycle contract, and the sidecar owns the
+In short, the plugin owns the lifecycle contract, and the daemon owns the
 heavy lifting.
