@@ -9,7 +9,8 @@ Default selection baseline:
 
 Why:
 
-- Nomic is the default because its Matryoshka-trained embeddings deliver significantly higher retrieval accuracy than MiniLM, with principled dimensionality tiering (`64d → 256d → 768d`) that lets the vector service trade memory for precision without re-embedding.
+- GGUF is the recommended default and preferred backend for local embedding. It delivers Matryoshka-trained `nomic-embed-text-v1.5` embeddings with no ONNX Runtime dependency and hardware-native acceleration on Apple Silicon (Metal), NVIDIA (CUDA), and CPU.
+- `bundled` uses the ONNX build of `nomic-embed-text-v1.5` and is the full-featured fallback when GGUF is unavailable.
 - bge-small-en-v1.5 is the fallback for resource-constrained systems and is automatically selected when the primary model's dimensions do not match the active collection.
 - Intel Macs without reliable Metal/MPS support should set `onnxDevice: "cpu"` to force CPU ONNX execution and bypass CoreML.
 
@@ -33,7 +34,7 @@ How it works:
 - `onnx-local` still requires local model assets through `embeddingModelPath`, typically a directory containing `embedding.json`.
 - The manifest may override or refine the profile, but explicit dimension mismatches fail closed.
 - The vector service store persists an embedding fingerprint, so reopening an existing store with a different effective model profile will fail instead of silently mixing vector spaces.
-- `onnxDevice` is passed through as `LIBRAVDB_ONNX_DEVICE` for vector service versions that support execution-provider selection (`auto`, `cpu`, `cuda`, `coreml`, `directml`, `openvino`).
+- `onnxDevice` is passed through as `LIBRAVDB_ONNX_DEVICE` for vector service versions that support execution-provider selection (`auto`, `cpu` (default), `cuda`, `coreml`, `directml`, `openvino`).
 
 ## Store Compatibility and Upgrades
 
@@ -65,6 +66,7 @@ Do not delete the old store until the replacement has been verified.
 
 Recommended usage:
 
-- `bundled` for the shipped default path, which uses `nomic-embed-text-v1.5`.
+- `gguf` for the recommended local embedding path, using `nomic-embed-text-v1.5` with hardware-native acceleration and no ONNX Runtime dependency.
+- `bundled` for the ONNX build of `nomic-embed-text-v1.5` when GGUF is unavailable.
 - `onnx-local` plus `embeddingProfile` when a power user wants a known model family with local assets.
 - treat remote/Ollama providers as future separate backend types, not as overloads of `custom-local`.
