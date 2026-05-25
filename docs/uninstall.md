@@ -1,10 +1,10 @@
 # Uninstall Guide
 
 This guide covers safe removal of the OpenClaw / OpenClaw.ai plugin and the
-separately managed `libravdbd` daemon.
+separately managed `libravdbd` vector service.
 
 If you only want to disable the memory replacement temporarily, remove the
-plugin slot assignment first and leave the daemon plus data in place.
+plugin slot assignment first and leave the vector service plus data in place.
 
 ## 1. Disable the Plugin
 
@@ -29,7 +29,7 @@ your standard OpenClaw plugin removal flow for
 
 ## 2. Stop the Daemon
 
-Stop the daemon before deleting binaries or stored data.
+Stop the vector service before deleting binaries or stored data.
 
 Homebrew:
 
@@ -69,7 +69,7 @@ brew untap xDarkicex/homebrew-openclaw-libravdb-memory
 
 ### Manual Daemon Install
 
-Delete the service file or launch agent you installed, along with the daemon
+Delete the service file or launch agent you installed, along with the vector service
 binary you copied into place.
 
 Common locations:
@@ -96,5 +96,5 @@ delete during uninstall.
 ## 5. Post-Uninstall Check
 
 After cleanup, `openclaw memory status` should no longer show this plugin as the
-active memory provider, and the daemon endpoint should no longer be reachable
+active memory provider, and the vector service endpoint should no longer be reachable
 unless you intentionally kept it running for another workflow.

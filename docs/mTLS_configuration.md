@@ -6,7 +6,7 @@ The plugin supports mutual TLS (mTLS) for gRPC connections to the Vector Service
 
 The Vector Service operator enables mTLS by configuring a client CA on the service side. When this is enabled, the Vector Service requires every connecting client to present a certificate signed by that CA. If the plugin is configured to use TLS but does not present a client certificate, the TLS handshake will fail and the connection will be rejected.
 
-The plugin cannot detect whether the daemon requires mTLS — it must be configured explicitly. If connections fail with a "client did not provide a certificate" error, the plugin likely needs a client certificate configured.
+The plugin cannot detect whether the vector service requires mTLS — it must be configured explicitly. If connections fail with a "client did not provide a certificate" error, the plugin likely needs a client certificate configured.
 
 ## Configuration fields
 
@@ -65,7 +65,7 @@ openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key \
   -CAcreateserial -out client.crt -days 365
 ```
 
-Replace `ca.crt` and `ca.key` with the CA certificate and key that the daemon operator provided.
+Replace `ca.crt` and `ca.key` with the CA certificate and key that the vector service operator provided.
 
 ## Error reference
 

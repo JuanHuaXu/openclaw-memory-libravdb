@@ -6,7 +6,7 @@ The plugin requires local vector storage, ONNX inference, transport isolation, a
 
 ## Decision
 
-Implement the memory engine as a Go daemon with a narrow gRPC transport boundary.
+Implement the memory engine as a Go vector service with a narrow gRPC transport boundary.
 
 ## Alternatives Considered
 

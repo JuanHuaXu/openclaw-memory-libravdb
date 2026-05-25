@@ -34,45 +34,45 @@ Use `grpcEndpointTlsMode` to override the default behavior:
 
 | Value | When to use |
 |---|---|
-| `"auto"` (default) | Standard operation — plugin heuristic matches daemon TLS setting automatically. |
-| `"tls"` | Daemon has TLS enabled on loopback or unix socket (rare; use when the daemon's `LIBRAVDB_GRPC_TLS_*` env vars are set on a local address). |
+| `"auto"` (default) | Standard operation — plugin heuristic matches vector service TLS setting automatically. |
+| `"tls"` | Daemon has TLS enabled on loopback or unix socket (rare; use when the vector service's `LIBRAVDB_GRPC_TLS_*` env vars are set on a local address). |
 | `"insecure"` | Service mesh or TLS-terminating tunnel handles encryption externally; both sides are plaintext. |
 
-**Default (local daemon):** No TLS configuration needed.
+**Default (local vector service):** No TLS configuration needed.
 Unix socket and loopback endpoints are always plaintext regardless
 of any TLS settings.
 
-**K8 / remote daemon with CA-issued cert:**
+**K8 / remote vector service with CA-issued cert:**
 No extra configuration needed. The plugin uses the system CA pool,
 which trusts certs issued by Let's Encrypt, cert-manager, and
 other public CAs automatically.
 
-**Remote daemon with self-signed or private CA cert:**
+**Remote vector service with self-signed or private CA cert:**
 Set `grpcEndpointTlsCa` to the path of the CA certificate PEM file:
 ```json
 {
-  "grpcEndpoint": "tcp:yourdaemon.internal:50051",
+  "grpcEndpoint": "tcp:yourvector service.internal:50051",
   "grpcEndpointTlsCa": "/etc/certs/ca.pem"
 }
 ```
-The daemon must be configured with matching TLS cert and key via
+The vector service must be configured with matching TLS cert and key via
 `LIBRAVDB_GRPC_TLS_CERT` and `LIBRAVDB_GRPC_TLS_KEY`.
 
-**Remote daemon with mTLS (mutual TLS):**
-When the daemon requires client certificate authentication, set both
+**Remote vector service with mTLS (mutual TLS):**
+When the vector service requires client certificate authentication, set both
 `grpcEndpointTlsClientCert` and `grpcEndpointTlsClientKey` (they must both
 be present or both be omitted):
 ```json
 {
-  "grpcEndpoint": "tcp:yourdaemon.internal:50051",
+  "grpcEndpoint": "tcp:yourvector service.internal:50051",
   "grpcEndpointTlsCa": "/etc/certs/ca.pem",
   "grpcEndpointTlsClientCert": "/etc/certs/client-cert.pem",
   "grpcEndpointTlsClientKey": "/etc/certs/client-key.pem"
 }
 ```
 
-**Local daemon with TLS enabled:**
-If the daemon has `LIBRAVDB_GRPC_TLS_CERT`/`LIBRAVDB_GRPC_TLS_KEY` set on a loopback
+**Local vector service with TLS enabled:**
+If the vector service has `LIBRAVDB_GRPC_TLS_CERT`/`LIBRAVDB_GRPC_TLS_KEY` set on a loopback
 address, explicitly set `grpcEndpointTlsMode: "tls"` to match:
 ```json
 {
@@ -89,7 +89,7 @@ address, explicitly set `grpcEndpointTlsMode: "tls"` to match:
 | `fallbackProfile` | string | `bge-small-en-v1.5` | Fallback when primary model fails dimension checks |
 | `embeddingBackend` | string | — | `bundled`, `onnx-local`, `custom-local`, or `remote` |
 | `onnxDevice` | string | `auto` | ONNX execution provider: `auto`, `cpu`, `coreml` (macOS), `cuda` (Linux/Windows), `directml` (Windows), `openvino` (Linux) |
-| `embeddingRuntimePath` | string | — | Path to ONNX runtime library visible to the daemon (maps to `LIBRAVDB_ONNX_RUNTIME`; required with `embeddingBackend: "onnx-local"`) |
+| `embeddingRuntimePath` | string | — | Path to ONNX runtime library visible to the vector service (maps to `LIBRAVDB_ONNX_RUNTIME`; required with `embeddingBackend: "onnx-local"`) |
 | `embeddingModelPath` | string | — | Path to the model directory containing `embedding.json`, `model.onnx`, and `tokenizer.json` (maps to `LIBRAVDB_EMBEDDING_MODEL`; required with `embeddingBackend: "onnx-local"`) |
 | `embeddingTokenizerPath` | string | — | Path to custom tokenizer file |
 | `embeddingDimensions` | number | — | Embedding dimension override |

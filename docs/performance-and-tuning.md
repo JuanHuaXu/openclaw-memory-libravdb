@@ -12,7 +12,7 @@ The numbers below are local measurements from this repository as of
 
 Measured local asset sizes:
 
-- daemon binary: `7.7M`
+- vector service binary: `7.7M`
 - bundled Nomic model directory: `523M`
 - bundled MiniLM fallback model directory: `87M`
 - optional T5 summarizer directory: `371M`
@@ -34,7 +34,7 @@ structure, and index state are stored as well.
 
 ### Memory
 
-Measured on Apple M2 by starting the daemon and reading RSS after startup:
+Measured on Apple M2 by starting the vector service and reading RSS after startup:
 
 - Nomic embedding path loaded without optional T5 summarizer: about `266 MB`
 - Nomic plus local ONNX T5 summarizer loaded: about `503 MB`
@@ -111,7 +111,7 @@ Run it with:
 LONGMEMEVAL_DATA_FILE=/path/to/longmemeval_oracle.json pnpm run benchmark:longmemeval
 ```
 
-If you already have a daemon running and do not want the benchmark to spawn
+If you already have a vector service running and do not want the benchmark to spawn
 another one, set:
 
 ```bash
@@ -127,7 +127,7 @@ Optional controls:
 - `LONGMEMEVAL_OUT_FILE` writes JSONL records for analysis
 
 The harness writes JSONL incrementally, so partial results survive if a
-transient daemon failure interrupts a long run. If the local test daemon drops
+transient vector service failure interrupts a long run. If the local test vector service drops
 mid-run, the benchmark restarts it and retries the current instance once before
 recording an error result.
 

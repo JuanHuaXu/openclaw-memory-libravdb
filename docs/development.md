@@ -8,9 +8,9 @@ installation, use [Install](./install.md).
 - Node.js `>= 22`
 - `pnpm`
 - OpenClaw CLI for end-to-end plugin testing
-- a published or locally built `libravdbd` daemon for integration tests
+- a published or locally built `libravdbd` vector service for integration tests
 
-Go is only required when building the daemon from a local daemon checkout or
+Go is only required when building the vector service from a local vector service checkout or
 regenerating Go gRPC stubs.
 
 ## Source Setup
@@ -29,19 +29,19 @@ pnpm run test:ts
 
 ## Local Daemon Build
 
-Prepare `.daemon-bin/libravdbd` for local plugin testing:
+Prepare `.vector service-bin/libravdbd` for local plugin testing:
 
 ```bash
-bash scripts/build-daemon.sh
+bash scripts/build-vector service.sh
 ```
 
 Supported inputs:
 
-- installed daemon on `PATH`, such as `brew install libravdbd`
+- installed vector service on `PATH`, such as `brew install libravdbd`
 - `LIBRAVDBD_BINARY_PATH=/path/to/libravdbd`
-- `LIBRAVDBD_SOURCE_DIR=/path/to/libravdbd` to build from a local daemon repo
+- `LIBRAVDBD_SOURCE_DIR=/path/to/libravdbd` to build from a local vector service repo
 
-For daemon-internal Go development and release work, use the separate
+For vector service-internal Go development and release work, use the separate
 `libravdbd` repository.
 
 ## Validation Commands
@@ -96,7 +96,7 @@ The npm package contains:
 - `dist/`
 
 The package is connect-only. It does not compile Go code, download models, or
-manage the daemon process during plugin installation.
+manage the vector service process during plugin installation.
 
 ## Release Automation
 
@@ -113,5 +113,5 @@ label. The workflow auto-bumps, tags, and publishes.
 
 ## Auto-Install Script
 
-`scripts/auto-install.sh` automates daemon + plugin installation. Run it when
+`scripts/auto-install.sh` automates vector service + plugin installation. Run it when
 setting up a machine that needs the full stack quickly.

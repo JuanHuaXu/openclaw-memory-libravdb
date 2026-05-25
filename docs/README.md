@@ -6,14 +6,14 @@ deeper by goal.
 
 ## Start Here
 
-- [Install](./install.md) - shortest supported install and daemon lifecycle path.
+- [Install](./install.md) - shortest supported install and vector service lifecycle path.
 - [Installation reference](./installation.md) - requirements, activation, verification, and troubleshooting.
-- [Uninstall](./uninstall.md) - safe disable, daemon shutdown, package removal, and optional data cleanup.
+- [Uninstall](./uninstall.md) - safe disable, vector service shutdown, package removal, and optional data cleanup.
 
 ## Understand The System
 
 - [Problem](./problem.md) - why this plugin replaces the stock memory lifecycle.
-- [Architecture](./architecture.md) - plugin, sidecar, storage, retrieval, and compaction overview.
+- [Architecture](./architecture.md) - plugin, vector service, storage, retrieval, and compaction overview.
 - [Dependency rationale](./dependencies.md) - why LibraVDB and slab-style storage fit this workload.
 - [Architecture decisions](./architecture-decisions/README.md) - accepted ADRs.
 
@@ -27,5 +27,5 @@ deeper by goal.
 ## Advanced And Source Docs
 
 - [Performance and tuning](./performance-and-tuning.md) - resource expectations and tuning knobs.
-- [Development](./development.md) - source setup, local daemon builds, generated IPC files, and validation commands.
+- [Development](./development.md) - source setup, local vector service builds, generated IPC files, and validation commands.
 - [Contributing](./contributing.md) - contributor workflow and repository expectations.

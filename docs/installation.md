@@ -10,10 +10,10 @@ This is the full installation reference for
 |---|---:|---|
 | Node.js | `22.0.0` | Enforced by `package.json` `engines.node`. |
 | OpenClaw | `2026.3.22` | Earliest supported host version for this plugin API shape. |
-| `libravdbd` | published daemon asset | Required for normal runtime. |
-| Go | `1.22` | Required only for local daemon development. |
+| `libravdbd` | published vector service asset | Required for normal runtime. |
+| Go | `1.22` | Required only for local vector service development. |
 | OS | macOS, Linux, Windows | Unix uses a local socket; Windows uses TCP loopback. |
-| Architecture | `arm64`, `x64` | Must match the daemon release asset. |
+| Architecture | `arm64`, `x64` | Must match the vector service release asset. |
 
 Resource sizing and benchmark data live in
 [Performance and tuning](./performance-and-tuning.md).
@@ -26,7 +26,7 @@ OpenClaw compatibility note:
 
 The published plugin package is connect-only. It installs TypeScript plugin code
 and docs; it does not compile Go code, download model assets, or supervise the
-daemon.
+vector service.
 
 Recommended macOS path:
 
@@ -55,7 +55,7 @@ tcp:127.0.0.1:37421
 ```
 
 This repository does not yet include a full Windows service-install walkthrough.
-Use the published Windows daemon asset under your preferred process supervisor
+Use the published Windows vector service asset under your preferred process supervisor
 or run `libravdbd serve` in a terminal for validation.
 
 ## Activation
@@ -77,7 +77,7 @@ The memory slot owns `openclaw memory ...` and memory-runtime calls. The
 context-engine slot enables automatic bootstrap, ingest, after-turn, and recall
 hooks during sessions.
 
-If the daemon uses a non-default endpoint, add `sidecarPath`:
+If the vector service uses a non-default endpoint, add `sidecarPath`:
 
 ```json
 {
@@ -122,7 +122,7 @@ $HOME/.libravdbd/data_nomic-embed-text-v1_5.libravdb
 
 ## Container Layout
 
-In Docker, keep the daemon, model assets, socket, logs, and database in the
+In Docker, keep the vector service, model assets, socket, logs, and database in the
 same mounted OpenClaw state volume. A typical container-side layout is:
 
 ```text
@@ -133,7 +133,7 @@ same mounted OpenClaw state volume. A typical container-side layout is:
 /home/node/.openclaw/libravdbd/models/nomic-embed-text-v1.5/embedding.json
 ```
 
-Start the daemon with explicit local ONNX paths before starting the gateway:
+Start the vector service with explicit local ONNX paths before starting the gateway:
 
 ```sh
 LIBRAVDB_GRPC_ENDPOINT=unix:/home/node/.openclaw/libravdbd/run/libravdb.sock \
@@ -171,7 +171,7 @@ Then configure the plugin with the same socket and asset paths:
 
 Do not let a container initialize a database with deterministic fallback
 embeddings and later switch the same file to ONNX embeddings. Move the fallback
-database aside first, then let the daemon create a fresh ONNX-backed store.
+database aside first, then let the vector service create a fresh ONNX-backed store.
 
 ## Verification
 
@@ -198,7 +198,7 @@ Expected output shape:
 
 Interpretation:
 
-- `Daemon=running` means the daemon answered the health check.
+- `Daemon=running` means the vector service answered the health check.
 - `Gate threshold=0.35` confirms the default durable-memory gate.
 - `Abstractive model=not provisioned` is acceptable; compaction falls back to
   the extractive path.
@@ -216,7 +216,7 @@ Common causes:
 - `embeddingBackend` is set to `onnx-local` but `embeddingRuntimePath` or
   `embeddingModelPath` is missing from plugin config
 
-Check the daemon first:
+Check the vector service first:
 
 ```bash
 openclaw memory status
@@ -231,8 +231,8 @@ libravdbd serve
 
 ### Deterministic fallback embeddings
 
-If daemon logs mention deterministic fallback mode, the daemon did not find the
-configured ONNX runtime or model manifest. Stop the daemon, set
+If vector service logs mention deterministic fallback mode, the vector service did not find the
+configured ONNX runtime or model manifest. Stop the vector service, set
 `LIBRAVDB_ONNX_RUNTIME` and `LIBRAVDB_EMBEDDING_MODEL`, confirm the model
 directory contains `embedding.json`, then restart. If a database was created
 while fallback mode was active, move that `.libravdb` file and its adjacent
@@ -240,9 +240,9 @@ while fallback mode was active, move that `.libravdb` file and its adjacent
 
 ### Incompatible database or embedding profile
 
-If the daemon exits with `database format is incompatible` or `database
+If the vector service exits with `database format is incompatible` or `database
 embedding profile is incompatible`, it is refusing to open a store whose saved
-format or embedding fingerprint differs from the current daemon settings. This
+format or embedding fingerprint differs from the current vector service settings. This
 fail-closed behavior protects the store from mixing incompatible vector spaces.
 
 Before changing anything, back up both files for the affected store:
@@ -252,12 +252,12 @@ Before changing anything, back up both files for the affected store:
 
 Then choose one recovery path:
 
-- downgrade to the daemon version that created the store; or
-- move the old store aside, start the new daemon so it creates a fresh store,
+- downgrade to the vector service version that created the store; or
+- move the old store aside, start the new vector service so it creates a fresh store,
   and rebuild/reingest memories with the current embedding profile.
 
 This can affect legacy local profiles such as older `all-minilm-l6-v2` setups
-when daemon defaults or model metadata change across releases. It is not
+when vector service defaults or model metadata change across releases. It is not
 expected for stores that stay on the current packaged profiles and assets. See
 [Embedding Profiles](./embedding-profiles.md#store-compatibility-and-upgrades)
 for more detail.

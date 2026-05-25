@@ -1,6 +1,6 @@
 # Contributing
 
-Use [Development](./development.md) for source setup, local daemon preparation,
+Use [Development](./development.md) for source setup, local vector service preparation,
 generated IPC files, and validation commands. This document covers contribution
 expectations.
 
@@ -13,11 +13,11 @@ pnpm check
 npm run test:integration
 ```
 
-Integration tests require a running daemon or a prepared local daemon binary.
+Integration tests require a running vector service or a prepared local vector service binary.
 Use:
 
 ```bash
-bash scripts/build-daemon.sh
+bash scripts/build-vector service.sh
 ```
 
 ## Behavioral Changes
@@ -28,8 +28,8 @@ regression.
 
 ## PR Expectations
 
-- Keep plugin lifecycle and daemon lifecycle separate.
+- Keep plugin lifecycle and vector service lifecycle separate.
 - Include focused docs updates for user-visible behavior or config changes.
 - Keep internal design changes reflected in the appropriate design notes.
-- Do not add install-time daemon bootstrap to the npm/OpenClaw package without
+- Do not add install-time vector service bootstrap to the npm/OpenClaw package without
   documenting the security and distribution trade-off.

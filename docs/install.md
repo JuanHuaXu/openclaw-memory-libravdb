@@ -2,7 +2,7 @@
 
 LibraVDB Memory is a connect-only OpenClaw plugin. Install the plugin as a
 normal package, install `libravdbd` separately, and point the plugin at the
-daemon endpoint when you need a non-default location.
+vector service endpoint when you need a non-default location.
 
 OpenClaw compatibility note:
 
@@ -26,7 +26,7 @@ This gives you:
 
 - a managed `libravdbd` service
 - a scanner-clean plugin install
-- a clean separation between plugin lifecycle and daemon lifecycle
+- a clean separation between plugin lifecycle and vector service lifecycle
 
 ## Plugin Install
 
@@ -53,7 +53,7 @@ Activate the plugin in `~/.openclaw/openclaw.json`:
 }
 ```
 
-If you run the daemon on a non-default endpoint, add a plugin config:
+If you run the vector service on a non-default endpoint, add a plugin config:
 
 ```json
 {
@@ -76,7 +76,7 @@ If you run the daemon on a non-default endpoint, add a plugin config:
 
 When `sidecarPath` is set to `"auto"`, the plugin resolves endpoints in this order on macOS/Linux:
 
-1. `LIBRAVDB_GRPC_ENDPOINT` if it is set to a valid daemon endpoint
+1. `LIBRAVDB_GRPC_ENDPOINT` if it is set to a valid vector service endpoint
 2. `$HOME/.libravdbd/run/libravdb.sock` if it exists
 3. `/opt/homebrew/var/libravdbd/run/libravdb.sock` if it exists
 4. `/usr/local/var/libravdbd/run/libravdb.sock` if it exists
@@ -84,7 +84,7 @@ When `sidecarPath` is set to `"auto"`, the plugin resolves endpoints in this ord
 
 ## Sidecar Daemon Install
 
-The daemon owns the local database, embeddings, and gRPC endpoint.
+The vector service owns the local database, embeddings, and gRPC endpoint.
 
 Default endpoints:
 
@@ -100,7 +100,7 @@ Default data path:
 
 ### Homebrew
 
-Homebrew is the preferred daemon lifecycle on macOS:
+Homebrew is the preferred vector service lifecycle on macOS:
 
 ```bash
 brew tap xDarkicex/homebrew-openclaw-libravdb-memory
@@ -118,7 +118,7 @@ brew info libravdbd
 
 ### Manual Service Management
 
-If you are not using Homebrew, manage the daemon explicitly.
+If you are not using Homebrew, manage the vector service explicitly.
 
 Linux user service from the repo template:
 
@@ -146,7 +146,7 @@ Windows uses a loopback TCP endpoint by default:
 - `tcp:127.0.0.1:37421`
 
 This guide does not yet include a full Windows service-install walkthrough.
-For now, use the published Windows daemon asset from the GitHub releases page
+For now, use the published Windows vector service asset from the GitHub releases page
 and run it under your preferred process supervisor or a manual terminal session.
 
 Foreground manual run:
@@ -161,11 +161,11 @@ you wrap it in `brew services`, `systemd`, or `launchd`.
 ### Containers and Docker
 
 The npm plugin does not start `libravdbd`. In a container, either run a separate
-daemon sidecar or use a small entrypoint wrapper that starts the daemon before
+vector service sidecar or use a small entrypoint wrapper that starts the vector service before
 the OpenClaw gateway.
 
-Keep the daemon assets and database in a mounted volume and point both the
-daemon and plugin at paths inside the container:
+Keep the vector service assets and database in a mounted volume and point both the
+vector service and plugin at paths inside the container:
 
 ```sh
 export LIBRAVDB_GRPC_ENDPOINT=unix:/home/node/.openclaw/libravdbd/run/libravdb.sock
@@ -223,19 +223,19 @@ store directly. The context engine can still use LibraVDB for recall while
 - Update it with your normal OpenClaw plugin update flow.
 - Disable it by removing the slot assignment from `~/.openclaw/openclaw.json`.
 
-The plugin does not manage the daemon process. Treat plugin activation and
-daemon supervision as separate lifecycle decisions.
+The plugin does not manage the vector service process. Treat plugin activation and
+vector service supervision as separate lifecycle decisions.
 
 ### Daemon Lifecycle
 
 - Start it with `brew services`, `systemd --user`, `launchctl bootstrap`, or a manual `libravdbd serve`.
-- Restart it when you change daemon-level environment variables or replace the binary.
+- Restart it when you change vector service-level environment variables or replace the binary.
 - Stop it before uninstalling or deleting on-disk data.
 - Point the plugin at the correct endpoint with `sidecarPath` if you do not use the default location.
 
 ## Verification
 
-After the plugin and daemon are both in place, run:
+After the plugin and vector service are both in place, run:
 
 ```bash
 openclaw memory status
@@ -243,11 +243,11 @@ openclaw memory status
 
 Healthy output should show that:
 
-- the daemon answered the local health check
+- the vector service answered the local health check
 - the memory and context-engine slots are active
 - the plugin can read stored counts and runtime settings
 
-If OpenClaw cannot reach the daemon, verify the endpoint first:
+If OpenClaw cannot reach the vector service, verify the endpoint first:
 
 - macOS/Linux default: `unix:$HOME/.libravdbd/run/libravdb.sock`
 - Windows default: `tcp:127.0.0.1:37421`

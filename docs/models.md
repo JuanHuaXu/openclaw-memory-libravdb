@@ -23,7 +23,7 @@ latency and offline operation are part of the product contract.
 The default profile is `nomic-embed-text-v1.5`. Nomic was chosen as the default
 because its Matryoshka-trained embeddings deliver significantly higher retrieval
 accuracy than MiniLM, with principled dimensionality tiering (`64d → 256d →
-768d`) that lets the daemon trade memory for precision without re-embedding.
+768d`) that lets the vector service trade memory for precision without re-embedding.
 
 `bge-small-en-v1.5` is the fallback profile. It has a smaller disk and memory
 footprint than Nomic and is automatically selected when the primary model's
@@ -35,7 +35,7 @@ For exact profile metadata, read [Embedding profiles](./embedding-profiles.md).
 ## Summarization
 
 Compaction can run without an abstractive summarizer. When the optional T5-small
-assets are not provisioned, the daemon degrades to the extractive path.
+assets are not provisioned, the vector service degrades to the extractive path.
 
 T5-small is the optional local abstractive summarizer because it is small enough
 for CPU-local operation while still useful for session-cluster summaries. Larger

@@ -10,9 +10,9 @@ LibraVDB Memory is split into two cooperating pieces:
 
 - a TypeScript OpenClaw plugin that owns the `memory` slot and registers
   context-engine capability at runtime
-- a Go daemon that owns storage, retrieval, and compaction
+- a Go vector service that owns storage, retrieval, and compaction
 
-The plugin keeps the host integration light and stable. The daemon keeps the
+The plugin keeps the host integration light and stable. The vector service keeps the
 data path local-first and handles the expensive memory operations outside the
 main chat process.
 
@@ -22,9 +22,9 @@ main chat process.
 flowchart LR
   Host["OpenClaw host"]
   Plugin["TypeScript plugin\nregistration + context engine"]
-  Runtime["Plugin runtime\nlazy daemon connect + RPC"]
+  Runtime["Plugin runtime\nlazy vector service connect + RPC"]
   MPS["memoryPromptSection\ncapability header"]
-  Sidecar["Go daemon"]
+  Sidecar["Go vector service"]
   Store["LibraVDB store"]
   Embed["Embedding engine"]
   Summarizer["Summarizer(s)"]
@@ -47,7 +47,7 @@ main retrieval path.
 
 ### `ingest`
 
-Session messages are written into the daemon-backed store. User turns may also
+Session messages are written into the vector service-backed store. User turns may also
 be promoted into durable user memory after gating.
 
 ### `assemble`
@@ -72,13 +72,13 @@ thresholds, compaction declines instead of forcing a rewrite.
 - retrieval happens in `assemble`
 - compaction is separate from prompt construction
 - lifecycle hints such as `before_reset` and `session_end` are advisory
-- the daemon is the source of truth for stored memory state
+- the vector service is the source of truth for stored memory state
 
 ## Failure Handling
 
 The plugin is designed to degrade gracefully:
 
-- if the daemon is unavailable, prompt assembly continues without recall
+- if the vector service is unavailable, prompt assembly continues without recall
 - if compaction fails, the active session is not blocked
 - if summarization is unavailable, the system falls back to the safer path
 
@@ -93,5 +93,5 @@ This architecture keeps the host integration simple while still supporting:
 - explicit compaction
 - local-first storage and retrieval
 
-In short, the plugin owns the lifecycle contract, and the daemon owns the
+In short, the plugin owns the lifecycle contract, and the vector service owns the
 heavy lifting.

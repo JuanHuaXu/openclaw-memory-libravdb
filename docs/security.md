@@ -18,7 +18,7 @@ The system is designed so a failure in one layer does not automatically collapse
 
 The published plugin package intentionally avoids install-time process execution.
 That is a deliberate trust and distribution choice: the OpenClaw plugin is a
-thin client, and the local `libravdbd` daemon is a separate operator-managed
+thin client, and the local `libravdbd` vector service is a separate operator-managed
 component.
 
 Current implementation facts:
@@ -28,9 +28,9 @@ Current implementation facts:
 - the published plugin source contains no direct `child_process` usage
 - the plugin connects only to a configured local endpoint such as
   `unix:/Users/<you>/.libravdbd/run/libravdb.sock` or `tcp:127.0.0.1:37421`
-- daemon installation and lifecycle are explicit user or operator actions
+- vector service installation and lifecycle are explicit user or operator actions
 
-The daemon distribution surface should be evaluated separately from the plugin
+The vector service distribution surface should be evaluated separately from the plugin
 package. If you install `libravdbd` from release assets or another package
 channel, validate that channel directly.
 
@@ -76,7 +76,7 @@ It reduces risk; it does not create a trusted execution environment.
 
 ## Deletion and Data Protection
 
-The daemon exposes deletion and flush primitives. That matters operationally for:
+The vector service exposes deletion and flush primitives. That matters operationally for:
 
 - user-requested memory removal
 - namespace cleanup
