@@ -231,12 +231,20 @@ libravdbd serve
 
 ### Deterministic fallback embeddings
 
-If vector service logs mention deterministic fallback mode, the vector service did not find the
-configured ONNX runtime or model manifest. Stop the vector service, set
-`LIBRAVDB_ONNX_RUNTIME` and `LIBRAVDB_EMBEDDING_MODEL`, confirm the model
-directory contains `embedding.json`, then restart. If a database was created
-while fallback mode was active, move that `.libravdb` file and its adjacent
-`.embedding.json` aside before starting with ONNX assets.
+If the vector service falls back to deterministic embeddings, it could not locate
+the configured ONNX runtime or model assets. The service will still run but all
+embedding operations will fail until resolved.
+
+To resolve: stop the vector service, then set `LIBRAVDB_ONNX_RUNTIME` to the
+full path of the ONNX runtime library (e.g. `libonnxruntime.so` or
+`libonnxruntime.dylib`) and `LIBRAVDB_EMBEDDING_MODEL` to the model directory
+containing `embedding.json`. Verify the model directory also contains the
+corresponding `.onnx` model file and `tokenizer.json`.
+
+If a database was created while the service was in fallback mode, move that
+`.libravdb` file and its adjacent `.embedding.json` aside before restarting —
+a store initialized with deterministic embeddings is incompatible with ONNX-backed
+operation.
 
 ### Incompatible database or embedding profile
 
