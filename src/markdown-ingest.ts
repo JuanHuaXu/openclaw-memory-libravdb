@@ -323,6 +323,14 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
     if (!this.started || this.stopping) {
       return;
     }
+    // Cancel any pending scheduled scans so they don't race with this refresh
+    for (const state of this.states.values()) {
+      if (state.scanState.timer) {
+        clearTimeout(state.scanState.timer);
+        state.scanState.timer = null;
+      }
+      state.scanState.dirty = false;
+    }
     for (const root of this.roots) {
       await this.scanRoot(root);
     }
@@ -480,11 +488,11 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
         continue;
       }
       stats.filesIncluded++;
-      currentFiles.add(child);
       const stat = await this.safeStatWithCtime(child);
       if (!stat) {
         continue;
       }
+      currentFiles.add(child);
       candidates.push({ path: child, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, ordinal: candidates.length });
     }
   }
@@ -499,7 +507,10 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
         this.lastAcceptMore = true;
         this.lastRetryAfterMs = 0;
       } else {
+        // Resume cursor target was deleted — clear it and resume normal processing
         rootState.scanState.resumeFromPath = null;
+        this.lastAcceptMore = true;
+        this.lastRetryAfterMs = 0;
       }
     }
     for (const candidate of sorted) {
@@ -635,6 +646,9 @@ class DirectoryMarkdownSourceAdapter implements MarkdownSourceAdapter {
   ): Promise<SyncMarkdownResult> {
     const sourceDoc = filePath;
     const relativePath = toPosixPath(path.relative(rootState.root, filePath));
+
+    // Re-check existence when initialStat is provided — the file may have been
+    // deleted between the scan pass and the sync pass.
     const stat = initialStat ?? (await this.safeStatWithCtime(filePath));
     if (!stat) {
       await this.deleteSourceDocument(sourceDoc);
