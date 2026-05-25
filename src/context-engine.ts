@@ -1555,7 +1555,7 @@ export function buildContextEngineFactory(
           tokenBudget: args.tokenBudget,
           currentTokenCount,
         });
-        const predictions = (result as any).predictions;
+        const predictions = result.predictions;
         if (Array.isArray(predictions) && predictions.length > 0) {
           if (predictiveContextCache.size >= PREDICTIVE_CACHE_MAX_SIZE) {
             const oldest = predictiveContextCache.keys().next().value;
