@@ -153,6 +153,20 @@ If your service runs elsewhere, set `sidecarPath`:
 - **Explicit service lifecycle** - the npm/OpenClaw package stays connect-only;
   `libravdbd` is installed and supervised separately.
 
+## Embedding Backend Providers
+
+The plugin supports multiple embedding backends. Set via `embeddingBackend` in plugin config:
+
+| Backend | Description | Config required |
+|---|---|---|
+| `gguf` (recommended) | Hardware-native acceleration via llama.cpp. Apple Silicon gets Metal, NVIDIA gets CUDA, everything else falls back to CPU. No ONNX Runtime dependency. | None — just `embeddingBackend: "gguf"` |
+| `bundled` | ONNX build of `nomic-embed-text-v1.5`. Full-featured fallback when GGUF is unavailable. | None |
+| `onnx-local` | Custom ONNX model from local assets. Requires `embeddingModelPath` and `embeddingRuntimePath`. | `embeddingModelPath`, `embeddingRuntimePath` |
+| `custom-local` | Custom ONNX variant with your own assets and runtime. | `embeddingModelPath`, `embeddingRuntimePath`, `embeddingProfile` |
+| `remote` | HTTP API embedder (e.g. OpenAI-compatible). Requires `embeddingEndpoint` and `embeddingRemoteModel`. | `embeddingEndpoint`, `embeddingRemoteModel` |
+
+GGUF is the recommended default. It delivers `nomic-embed-text-v1.5` embeddings with hardware-native acceleration and no ONNX Runtime dependency. See [Embedding profiles](./docs/embedding-profiles.md) for full details.
+
 ## Security Defaults
 
 Stored memory is treated as untrusted historical context. Retrieved memory is
@@ -184,11 +198,12 @@ All keys are optional. For the full reference, see [Configuration](./docs/config
 | Key | Type | Default | |
 |---|---|---|---|
 | `sidecarPath` | string | `auto` | `"auto"` probes standard paths; set `unix:/path` or `tcp:host:port` to override |
+| `embeddingBackend` | string | `gguf` | Embedding backend: `gguf` (recommended), `bundled`, `onnx-local`, `custom-local`, `remote` |
 | `embeddingProfile` | string | `nomic-embed-text-v1.5` | Primary embedding model |
 | `fallbackProfile` | string | `bge-small-en-v1.5` | Fallback profile for dimension mismatches |
 | `embeddingRuntimePath` | string | — | Required with `embeddingBackend: "onnx-local"`; path to `libonnxruntime` visible to `libravdbd` |
 | `embeddingModelPath` | string | — | Required with `embeddingBackend: "onnx-local"`; directory containing `embedding.json`, `model.onnx`, and `tokenizer.json` |
-| `onnxDevice` | string | `auto` | ONNX execution provider; set `cpu` to bypass CoreML/MPS on Intel Macs |
+| `onnxDevice` | string | `cpu` | ONNX execution provider; `cpu` is the default; `auto` lets libravdbd auto-detect |
 | `userId` | string | auto-derived | Stable identity for cross-session durable memory |
 | `crossSessionRecall` | boolean | `true` | When `false`, only session-scoped memories are retrieved |
 | `compactSessionTokenBudget` | number | `2000` | Auto-compaction token threshold; `0` disables |
