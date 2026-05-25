@@ -276,6 +276,6 @@ automatic session ingest and recall may not run.
 
 ### Lifecycle journal looks empty
 
-The sidecar journal only records advisory lifecycle hints such as `before_reset`
+The vector service journal only records advisory lifecycle hints such as `before_reset`
 and `session_end`. It is bounded by `lifecycleJournalMaxEntries`, default `500`,
 and is not part of normal memory recall.

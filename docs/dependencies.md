@@ -33,6 +33,6 @@ Slab-style raw-vector storage was selected because:
 - collections grow in bursty append patterns
 - compaction and search create pressure on allocation churn
 
-The measured conclusion from the internal profiling pass was that slab-backed raw-vector storage was performance-competitive with the plain in-memory backend while making allocation behavior more predictable. The main trade-off is reserved-but-unused capacity, which is acceptable for this local sidecar workload.
+The measured conclusion from the internal profiling pass was that slab-backed raw-vector storage was performance-competitive with the plain in-memory backend while making allocation behavior more predictable. The main trade-off is reserved-but-unused capacity, which is acceptable for this local vector service workload.
 
 The dependency is therefore justified by workload shape, not by novelty.

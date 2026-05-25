@@ -32,7 +32,7 @@ How it works:
 - `embeddingProfile` supplies metadata defaults like family, dimensions, and normalize behavior.
 - `onnx-local` still requires local model assets through `embeddingModelPath`, typically a directory containing `embedding.json`.
 - The manifest may override or refine the profile, but explicit dimension mismatches fail closed.
-- The sidecar store persists an embedding fingerprint, so reopening an existing store with a different effective model profile will fail instead of silently mixing vector spaces.
+- The vector service store persists an embedding fingerprint, so reopening an existing store with a different effective model profile will fail instead of silently mixing vector spaces.
 - `onnxDevice` is passed through as `LIBRAVDB_ONNX_DEVICE` for vector service versions that support execution-provider selection (`auto`, `cpu`, `cuda`, `coreml`, `directml`, `openvino`).
 
 ## Store Compatibility and Upgrades

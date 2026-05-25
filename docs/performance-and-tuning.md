@@ -89,7 +89,7 @@ are advanced controls, not required install settings.
 | `compactionThresholdFraction` | Dynamic trigger ratio when `compactThreshold` is unset, default `0.8`. |
 | `compactSessionTokenBudget` | Auto-compaction budget since the last compaction, default `2000`; set `0` to disable. |
 | `rpcTimeoutMs` | Sidecar RPC timeout, default `30000`. |
-| `maxRetries` | Retry budget for sidecar RPC calls. |
+| `maxRetries` | Retry budget for vector service RPC calls. |
 | `logLevel` | Plugin log level. |
 
 Model-related fields live in [Embedding profiles](./embedding-profiles.md) and

@@ -82,7 +82,7 @@ When `sidecarPath` is set to `"auto"`, the plugin resolves endpoints in this ord
 4. `/usr/local/var/libravdbd/run/libravdb.sock` if it exists
 5. fallback to `$HOME/.libravdbd/run/libravdb.sock`
 
-## Sidecar Daemon Install
+## Vector Service Install
 
 The vector service owns the local database, embeddings, and gRPC endpoint.
 
@@ -161,7 +161,7 @@ you wrap it in `brew services`, `systemd`, or `launchd`.
 ### Containers and Docker
 
 The npm plugin does not start `libravdbd`. In a container, either run a separate
-vector service sidecar or use a small entrypoint wrapper that starts the vector service before
+vector service or use a small entrypoint wrapper that starts the vector service before
 the OpenClaw gateway.
 
 Keep the vector service assets and database in a mounted volume and point both the

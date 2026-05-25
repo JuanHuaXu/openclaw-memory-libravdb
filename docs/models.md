@@ -8,7 +8,7 @@ available offline after assets are installed.
 
 `assemble` runs before each response build. An embedding request that crosses a
 process and HTTP server boundary adds avoidable tail latency. Local ONNX
-inference inside the sidecar keeps retrieval close to the database and avoids a
+inference inside the vector service keeps retrieval close to the database and avoids a
 runtime dependency on a separate model server.
 
 ONNX assets can be provisioned once and reused without network access. Given

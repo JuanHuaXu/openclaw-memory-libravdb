@@ -9,7 +9,7 @@ The default `memory-lancedb` style plugin is still a good fit when you want:
 - a simple top-k semantic lookup over durable notes
 - a low-complexity setup
 - a heuristic capture model where the agent decides what to save
-- no additional sidecar process
+- no additional vector service process
 
 For short sessions and light persistent memory, that is often the right answer.
 
