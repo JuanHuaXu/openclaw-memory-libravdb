@@ -90,23 +90,24 @@ function normalizeCompactResult(
 ): OpenClawCompatibleCompactResult {
   const didCompact = response?.didCompact === true;
   const tokensBefore = normalizeCurrentTokenCount(options.tokensBefore) ?? 0;
-  const details = {
-    clustersFormed:
-      typeof response?.clustersFormed === "number" ? response.clustersFormed : undefined,
-    clustersDeclined:
-      typeof response?.clustersDeclined === "number" ? response.clustersDeclined : undefined,
-    turnsRemoved: typeof response?.turnsRemoved === "number" ? response.turnsRemoved : undefined,
-    summaryMethod:
-      typeof response?.summaryMethod === "string" && response.summaryMethod.length > 0
-        ? response.summaryMethod
-        : undefined,
-    meanConfidence:
-      typeof response?.meanConfidence === "number" ? response.meanConfidence : undefined,
-    summaryText:
-      typeof response?.summaryText === "string" && response.summaryText.length > 0
-        ? response.summaryText
-        : undefined,
-  };
+  const details: {
+    clustersFormed?: number;
+    clustersDeclined?: number;
+    turnsRemoved?: number;
+    summaryMethod?: string;
+    meanConfidence?: number;
+    summaryText?: string;
+  } = {};
+  if (typeof response?.clustersFormed === "number") details.clustersFormed = response.clustersFormed;
+  if (typeof response?.clustersDeclined === "number") details.clustersDeclined = response.clustersDeclined;
+  if (typeof response?.turnsRemoved === "number") details.turnsRemoved = response.turnsRemoved;
+  if (typeof response?.summaryMethod === "string" && response.summaryMethod.length > 0) {
+    details.summaryMethod = response.summaryMethod;
+  }
+  if (typeof response?.meanConfidence === "number") details.meanConfidence = response.meanConfidence;
+  if (typeof response?.summaryText === "string" && response.summaryText.length > 0) {
+    details.summaryText = response.summaryText;
+  }
   return {
     ok: true,
     compacted: didCompact,

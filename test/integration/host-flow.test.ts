@@ -220,13 +220,19 @@ test("assemble passes correct configuration mapping and returns expected payload
   assert.equal(params.config.recoveryMinConfidenceMean, 0.42);
   assert.equal(params.emitDebug, true);
 
-  // Verify inbound response handling — user turn is reinjected for replay safety
+  // Verify inbound response handling: daemon-only recall is injected as
+  // untrusted prompt context while the current user turn is preserved.
   assert.ok(assembled.estimatedTokens >= 150);
-  assert.equal(assembled.systemPromptAddition, "<recalled_memories>static memory data</recalled_memories>");
-  assert.deepEqual(assembled.messages, [
-    { role: "user", content: "what do you remember?" },
-    { role: "assistant", content: "Mocked recalled context" },
-  ]);
+  assert.match(
+    assembled.systemPromptAddition,
+    /^<recalled_memories>static memory data<\/recalled_memories>/,
+  );
+  assert.match(assembled.systemPromptAddition, /<retrieved_memory>/);
+  assert.match(
+    assembled.systemPromptAddition,
+    /<memory_item source="recalled" role="assistant" provenance="durable_memory">Mocked recalled context<\/memory_item>/,
+  );
+  assert.deepEqual(assembled.messages, [{ role: "user", content: "what do you remember?" }]);
   assert.equal(assembled.debug?.recoveryTriggerFired, true);
 });
 
@@ -314,7 +320,10 @@ test("assemble triggers force compaction at dynamic 80% threshold before daemon 
 
   const assembleParams = rpc.getLastCall("assemble_context_internal");
   assert.ok(assembleParams, "Expected assemble_context_internal to be called after compaction");
-  assert.equal(assembled.messages[0]?.content, "ok");
+  assert.match(
+    assembled.systemPromptAddition,
+    /<memory_item source="recalled" role="assistant" provenance="durable_memory">ok<\/memory_item>/,
+  );
   assert.equal(logger.warns.length, 0);
   assert.match(logger.infos[0] ?? "", /predictive compaction trigger phase=assemble/);
   assert.match(logger.infos[1] ?? "", /predictive compaction completed phase=assemble/);
@@ -374,8 +383,11 @@ test("assemble proceeds to assembly when server legitimately declines compaction
 
   const assembleParams = rpc.getLastCall("assemble_context_internal");
   assert.ok(assembleParams, "assemble_context_internal must be called when compaction declines");
-  assert.equal(assembled.messages[0]?.content, "recalled");
-  assert.equal(assembled.systemPromptAddition, "<recalled>x</recalled>");
+  assert.match(assembled.systemPromptAddition, /^<recalled>x<\/recalled>/);
+  assert.match(
+    assembled.systemPromptAddition,
+    /<memory_item source="recalled" role="assistant" provenance="durable_memory">recalled<\/memory_item>/,
+  );
   assert.match(logger.warns[0] ?? "", /did not compact.*phase=assemble/);
 });
 
