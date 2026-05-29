@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { PluginRuntime } from "./plugin-runtime.js";
 import type {
   LoggerLike,
@@ -548,7 +549,7 @@ export function normalizeKernelMessage(message: {
   return {
     role: message.role,
     content: normalizeKernelContent(message.content),
-    id: message.id || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    id: message.id || randomUUID(),
   };
 }
 
@@ -990,6 +991,27 @@ export function normalizeAssembleResult(
     promptAuthority: PROMPT_AUTHORITY_PREASSEMBLY_MAY_OVERFLOW,
     ...(result.debug != null ? { debug: result.debug } : {}),
   };
+}
+
+type CursorFromDaemon = {
+  lastProcessedIndex: number;
+  sessionVersion: number;
+  manifestTailHash: string;
+};
+
+function extractCursorFromResult(result: unknown): CursorFromDaemon | undefined {
+  if (result && typeof result === "object" && "cursor" in result) {
+    const cursor = (result as Record<string, unknown>).cursor;
+    if (cursor && typeof cursor === "object") {
+      const c = cursor as Record<string, unknown>;
+      if (typeof c.lastProcessedIndex === "number" &&
+          typeof c.sessionVersion === "number" &&
+          typeof c.manifestTailHash === "string") {
+        return c as CursorFromDaemon;
+      }
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -1545,7 +1567,7 @@ export function buildContextEngineFactory(
       // Apply token budget cap only to new messages
       const ingestMessages = boundAfterTurnMessagesForIngest(newMessages, logger, sessionId);
 
-      const startIndex = manifestStore.deriveStartingIndex(manifest, args.prePromptMessageCount) + overlapIndex;
+      const startIndex = manifestStore.deriveStartingIndex(manifest, args.prePromptMessageCount);
       const cursor = {
         lastProcessedIndex: startIndex > 0 ? startIndex - 1 : 0,
         sessionVersion: manifest.version,
@@ -1575,15 +1597,13 @@ export function buildContextEngineFactory(
           prePromptMessageCount: args.prePromptMessageCount,
           isHeartbeat: args.isHeartbeat,
           cursor,
-        } as Parameters<typeof client.afterTurnKernel>[0]);
+        } as unknown as Parameters<typeof client.afterTurnKernel>[0]);
 
         // Reconcile manifest with daemon-confirmed cursor.
         // The daemon returns a cursor even when it ingests zero messages
         // (e.g. gap detected, all messages deduped). Trust its
         // lastProcessedIndex over our optimistic startIndex math.
-        const daemonCursor = (result as Record<string, unknown>).cursor as
-          | { lastProcessedIndex: number; sessionVersion: number; manifestTailHash: string }
-          | undefined;
+        const daemonCursor = extractCursorFromResult(result);
 
         if (daemonCursor) {
           if (!daemonCursor.manifestTailHash) {

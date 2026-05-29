@@ -8,7 +8,10 @@ import path from "node:path";
 export type ClientGetter = () => Promise<LibravDBClient>;
 export const DEFAULT_RPC_TIMEOUT_MS = 120_000;
 export const STARTUP_HEALTH_TIMEOUT_MS = 2000;
-const ENV_RPC_TIMEOUT_MS = Number(process.env.LIBRAVDB_RPC_TIMEOUT_MS) || 0;
+const ENV_RPC_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.LIBRAVDB_RPC_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+})();
 
 export const VALID_TLS_MODES = ["auto", "tls", "insecure"] as const;
 export type ValidTlsMode = typeof VALID_TLS_MODES[number];

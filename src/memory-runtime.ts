@@ -123,18 +123,22 @@ function createMemorySearchManager(
           ? result.results
           : result.results.filter((item) => item.score >= minScore);
 
-      const legacyResults = filteredResults.map((item) => ({
-        ...item,
-        content: item.text,
-      }));
+      const legacyResults = filteredResults.map((item) => {
+        const meta = parseMetadataJson(item);
+        return {
+          ...item,
+          content: item.text || (typeof meta.text === "string" ? meta.text : ""),
+        };
+      });
       if (legacyCall) {
         return { results: legacyResults };
       }
       const memoryResults = filteredResults.map((item) => {
         const meta = parseMetadataJson(item);
         const collection = typeof meta.collection === "string" ? meta.collection : "memory";
+        const effectiveText = item.text || (typeof meta.text === "string" ? meta.text : "") || "";
         const relPath = encodeSearchResultPath(collection, item.id);
-        returnedSearchPaths.set(relPath, item.text);
+        returnedSearchPaths.set(relPath, effectiveText);
         return toMemorySearchResult(item);
       });
       return memoryResults;

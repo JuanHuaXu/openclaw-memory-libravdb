@@ -35,7 +35,8 @@ export class TurnManifestStore {
   }
 
   private getManifestPath(sessionId: string): string {
-    return path.join(this.manifestDir, `${sessionId}.manifest.json`);
+    const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
+    return path.join(this.manifestDir, `${safe}.manifest.json`);
   }
 
   public hashString(data: string): string {

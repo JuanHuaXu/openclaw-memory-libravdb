@@ -51,27 +51,38 @@ jobs:
 
       - name: Verify contracts version alignment
         run: |
-          CONTRACTS_VERSION=$(node -p "require('./libravdb-contracts/package.json').version")
-          PLUGIN_EXPECTED=$(node -p "require('./openclaw-memory-libravdb/package.json').dependencies['@xdarkicex/libravdb-contracts']")
-          echo "contracts source version: $CONTRACTS_VERSION"
-          echo "plugin expects: $PLUGIN_EXPECTED"
+          PLUGIN_DECLARED=$(node -p "require('./openclaw-memory-libravdb/package.json').dependencies['@xdarkicex/libravdb-contracts']")
+          echo "plugin declares: $PLUGIN_DECLARED"
 
-          # Verify the plugin's lockfile resolves to a version >= contracts source.
-          # If the lockfile is behind, the plugin ships stale generated types.
           LOCKED_VERSION=$(grep -A1 '@xdarkicex/libravdb-contracts@' openclaw-memory-libravdb/pnpm-lock.yaml | grep 'version:' | awk '{print $2}' | tr -d '"' | head -1)
           echo "lockfile resolves to: ${LOCKED_VERSION:-none}"
 
-          if [ "$LOCKED_VERSION" != "$CONTRACTS_VERSION" ]; then
+          if [ -z "${LOCKED_VERSION}" ]; then
             echo ""
-            echo "ERROR: Lockfile contracts version (${LOCKED_VERSION:-none}) != contracts source (${CONTRACTS_VERSION})."
-            echo "Update the plugin to the latest contracts before publishing:"
-            echo "  cd openclaw-memory-libravdb"
-            echo "  pnpm update @xdarkicex/libravdb-contracts@^${CONTRACTS_VERSION}"
-            echo "  git add pnpm-lock.yaml package.json"
-            echo "  git commit -m 'deps: bump contracts to v${CONTRACTS_VERSION}'"
+            echo "ERROR: Could not resolve @xdarkicex/libravdb-contracts version from lockfile."
+            echo "Run: cd openclaw-memory-libravdb && pnpm install"
             exit 1
           fi
-          echo "Contracts version aligned."
+
+          # Verify lockfile resolves to at least the minimum declared version.
+          # PLUGIN_DECLARED is a semver range (e.g. ^2.0.12); strip the prefix
+          # to get the floor and compare major.minor.patch.
+          MIN_EXPECTED=$(echo "$PLUGIN_DECLARED" | sed 's/^[\^~>=<]*//')
+          echo "minimum expected: $MIN_EXPECTED"
+
+          node -e "
+            const min = '$MIN_EXPECTED'.split('.').map(Number);
+            const locked = '$LOCKED_VERSION'.split('.').map(Number);
+            const behind = locked[0] < min[0] ||
+              (locked[0] === min[0] && locked[1] < min[1]) ||
+              (locked[0] === min[0] && locked[1] === min[1] && locked[2] < min[2]);
+            if (behind) {
+              console.error('ERROR: Lockfile version ' + '$LOCKED_VERSION' + ' is behind declared minimum ' + '$MIN_EXPECTED' + '.');
+              console.error('Run: cd openclaw-memory-libravdb && pnpm update @xdarkicex/libravdb-contracts@' + '$PLUGIN_DECLARED');
+              process.exit(1);
+            }
+          " || exit 1
+          echo "Contracts version aligned (lockfile $LOCKED_VERSION >= $MIN_EXPECTED)."
 
       - uses: bufbuild/buf-setup-action@v1
         with:

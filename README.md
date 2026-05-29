@@ -193,13 +193,13 @@ All keys are optional. For the full reference, see [Configuration](./docs/config
 | `embeddingModelPath` | string | — | Required with `embeddingBackend: "onnx-local"`; directory containing `embedding.json`, `model.onnx`, and `tokenizer.json` |
 | `onnxDevice` | string | `cpu` | ONNX execution provider; `cpu` is the default; `auto` lets libravdbd auto-detect |
 | `userId` | string | auto-derived | Stable identity for cross-session durable memory |
-| `tenantId` | string | auto-derived | Multi-tenant identifier. Isolates the agent to a dedicated `.libravdb` file. Defaults to `userId` if unset. |
+| `tenantId` | string | auto-derived | Multi-tenant identifier. Resolved as `cfg.tenantId` > `LIBRAVDB_AGENT_ID` env > `userId`. Isolates the agent to a dedicated `.libravdb` file. |
 | `crossSessionRecall` | boolean | `true` | When `false`, only session-scoped memories are retrieved |
 | `compactSessionTokenBudget` | number | `2000` | Auto-compaction token threshold; `0` disables |
 
 ## Multi-Tenant Support
 
-`libravdbd` supports true multi-tenancy, allowing you to run multiple OpenClaw agents on the same machine with completely isolated vector databases. By default, the plugin connects to a single tenant database named after your `userId`.
+`libravdbd` supports true multi-tenancy, allowing you to run multiple OpenClaw agents on the same machine with completely isolated vector databases. By default, the plugin connects to a single-tenant database named after your `userId`.
 
 If you want to run multiple distinct agents (e.g., a "research-agent" and a "coding-agent"), you can assign each a unique `tenantId` in the OpenClaw configuration:
 
@@ -224,7 +224,7 @@ The vector service will seamlessly route the agent's requests to a dedicated, is
 
 When running in multi-tenant mode, the vector service automatically scaffolds an isolated directory structure inside your configured `agent_db_root` (or the default profile directory). It scopes databases to the specific embedding model in use:
 
-```
+```text
 ~/.libravdbd/data_nomic-embed-text-v1_5/
 ├── _internal:dedupe.libravdb      # Cross-session deduplication state
 ├── _internal:registry.libravdb    # Tenant registry and health logs
@@ -297,7 +297,27 @@ grpc_tls_ca: "/etc/libravdbd/certs/ca.crt" # Enforces mTLS client verification
 ```
 
 **3. Connect Your Client:**
-Secure external clients or downstream OpenClaw agents by passing the TLS client certificates to the gRPC connection transport.
+Add the TLS client certificate paths to your OpenClaw plugin config in `openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "libravdb-memory": {
+        "config": {
+          "grpcEndpoint": "tcp:libravdbd.local:9090",
+          "grpcEndpointTlsMode": "tls",
+          "grpcEndpointTlsClientCert": "/etc/libravdbd/certs/client.crt",
+          "grpcEndpointTlsClientKey": "/etc/libravdbd/certs/client.key",
+          "grpcEndpointTlsCa": "/etc/libravdbd/certs/ca.crt"
+        }
+      }
+    }
+  }
+}
+```
+
+The `grpcEndpointTlsCa` field is required for mTLS; the plugin will verify the server certificate against this CA. When `grpcEndpointTlsMode` is `"tls"`, plaintext and unauthenticated connections are rejected.
 
 ## Optional Features
 
@@ -310,7 +330,7 @@ Secure external clients or downstream OpenClaw agents by passing the TLS client 
 
 OpenClaw's dreaming cron writes AI-generated memory reflections to a dream diary
 markdown file. The plugin can watch this file and automatically promote vetted
-entries into the daemon's `dream:{userId}` durable collection.
+entries into the `dream:{userId}` durable collection managed by the vector service.
 
 Enable by adding these config keys:
 
@@ -341,6 +361,12 @@ The diary file is standard markdown. Entries under a `## Deep Sleep` or
 `## Dream Promotion` heading are parsed as bullet points with trailing metadata:
 
 ```markdown
+## Deep Sleep
+- A key insight about the user's workflow patterns {score=0.85, recall=4, unique=3}
+- Another consolidated observation {score=0.72, recall=2, unique=2}
+
+<!-- or equivalently: -->
+
 ## Dream Promotion
 - A key insight about the user's workflow patterns {score=0.85, recall=4, unique=3}
 - Another consolidated observation {score=0.72, recall=2, unique=2}
