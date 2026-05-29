@@ -123,18 +123,22 @@ function createMemorySearchManager(
           ? result.results
           : result.results.filter((item) => item.score >= minScore);
 
-      const legacyResults = filteredResults.map((item) => ({
-        ...item,
-        content: item.text,
-      }));
+      const legacyResults = filteredResults.map((item) => {
+        const meta = parseMetadataJson(item);
+        return {
+          ...item,
+          content: item.text || (typeof meta.text === "string" ? meta.text : ""),
+        };
+      });
       if (legacyCall) {
         return { results: legacyResults };
       }
       const memoryResults = filteredResults.map((item) => {
         const meta = parseMetadataJson(item);
         const collection = typeof meta.collection === "string" ? meta.collection : "memory";
+        const effectiveText = item.text || (typeof meta.text === "string" ? meta.text : "") || "";
         const relPath = encodeSearchResultPath(collection, item.id);
-        returnedSearchPaths.set(relPath, item.text);
+        returnedSearchPaths.set(relPath, effectiveText);
         return toMemorySearchResult(item);
       });
       return memoryResults;
@@ -257,12 +261,13 @@ function parseMetadataJson(item: { metadataJson?: Uint8Array }): Record<string, 
 function toMemorySearchResult(item: ProtoSearchResult) {
   const meta = parseMetadataJson(item);
   const collection = typeof meta.collection === "string" ? meta.collection : "memory";
+  const effectiveText = item.text || (typeof meta.text === "string" ? meta.text : "") || "";
   return {
     path: encodeSearchResultPath(collection, item.id),
     startLine: 1,
-    endLine: Math.max(1, item.text.split("\n").length),
+    endLine: Math.max(1, effectiveText.split("\n").length),
     score: item.score,
-    snippet: item.text,
+    snippet: effectiveText,
     source: collection.startsWith("session:") || collection.startsWith("session_") ? "sessions" : "memory",
     citation: `${collection}:${item.id}`,
   };

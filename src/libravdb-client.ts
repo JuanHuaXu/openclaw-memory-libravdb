@@ -65,6 +65,9 @@ export interface LibravDBClientOptions {
   tlsMode?: "auto" | "tls" | "insecure";
   tlsClientCertPath?: string;
   tlsClientKeyPath?: string;
+  /** Stable tenant key for multi-agent DB routing. Attached as the
+   *  `libravdb-tenant-key` gRPC metadata header on every call. */
+  tenantKey?: string;
 }
 
 export function resolveClientEndpoint(configuredEndpoint?: string): string {
@@ -78,6 +81,8 @@ export function resolveClientEndpoint(configuredEndpoint?: string): string {
     path.join(os.homedir(), ".libravdbd", "run"),
     "/opt/homebrew/var/libravdbd/run",
     "/usr/local/var/libravdbd/run",
+    "/var/run/libravdbd",
+    "/run/libravdbd",
   ];
 
   for (const dir of candidateDirs) {
@@ -271,6 +276,16 @@ export class LibravDBClient {
       rpcMutex,
     });
 
+    const interceptors: Interceptor[] = [];
+    if (options.tenantKey) {
+      const tenantKey = options.tenantKey;
+      interceptors.push((next) => async (req) => {
+        req.header.set("libravdb-tenant-key", tenantKey);
+        return next(req);
+      });
+    }
+    interceptors.push(authInterceptor);
+
     const transport = createGrpcTransport({
       baseUrl: targetUrl,
       httpVersion: "2",
@@ -283,7 +298,7 @@ export class LibravDBClient {
             ...(isInsecure ? { rejectUnauthorized: false } : {}),
           },
       defaultTimeoutMs: options.timeoutMs ?? 30000,
-      interceptors: [authInterceptor],
+      interceptors,
     });
 
     this.client = createPromiseClient(LibravDB, transport);
