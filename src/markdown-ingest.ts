@@ -32,7 +32,7 @@ const DEFAULT_MARKDOWN_INGEST_EXCLUDES = [
 ];
 type Disposable = { close(): void };
 
-interface FsDirentLike {
+export interface FsDirentLike {
   name: string;
   isDirectory(): boolean;
   isFile(): boolean;

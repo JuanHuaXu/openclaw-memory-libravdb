@@ -4,13 +4,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { createMarkdownIngestionHandle } from "../../src/markdown-ingest.js";
-
-interface FsDirentLike {
-  name: string;
-  isDirectory(): boolean;
-  isFile(): boolean;
-}
+import { createMarkdownIngestionHandle, type FsDirentLike } from "../../src/markdown-ingest.js";
 
 class FakeRpcClient {
   calls: Array<{ method: string; params: unknown }> = [];
