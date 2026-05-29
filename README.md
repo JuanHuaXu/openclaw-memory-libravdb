@@ -14,7 +14,7 @@
 `@xdarkicex/openclaw-memory-libravdb` is a local-first OpenClaw memory plugin
 backed by the `libravdbd` vector service. It replaces the lightweight default memory
 path with scoped session, user, and global memory; continuity-aware prompt
-assembly; durable recall; and daemon-owned compaction.
+assembly; durable recall; and vector-service-owned compaction.
 
 [Install](./docs/install.md) · [Full installation reference](./docs/installation.md) · [Architecture](./docs/architecture.md) · [Security](./docs/security.md) · [Performance and tuning](./docs/performance-and-tuning.md) · [Contributing](./docs/contributing.md)
 
@@ -33,7 +33,7 @@ brew install libravdbd
 brew services start libravdbd
 ```
 
-> **After upgrades:** Always restart the daemon so the newly installed binary takes effect:
+> **After upgrades:** Always restart the vector service so the newly installed binary takes effect:
 > ```bash
 > # macOS (Homebrew)
 > brew services restart libravdbd
@@ -69,25 +69,16 @@ systemctl --user enable --now libravdbd
 openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 ```
 
-Then activate the plugin in `~/.openclaw/openclaw.json`:
+This automatically configures `plugins.slots.memory` and `plugins.slots.contextEngine` to point to `libravdb-memory`, and sets up the plugin entry with defaults.
 
-```json
-{
-  "plugins": {
-    "slots": {
-      "memory": "libravdb-memory",
-      "contextEngine": "libravdb-memory"
-    },
-    "entries": {
-      "libravdb-memory": {
-        "enabled": true,
-        "config": {
-          "sidecarPath": "auto"
-        }
-      }
-    }
-  }
-}
+Then restart the gateway so the plugin loads:
+
+```bash
+# macOS/Linux
+openclaw daemon restart
+
+# Verify the plugin is loaded
+openclaw plugins list | grep libravdb
 ```
 
 Verify the service and plugin:
@@ -136,22 +127,19 @@ If your service runs elsewhere, set `sidecarPath`:
 
 ## Highlights
 
-- **Memory capability ownership** - owns the OpenClaw `memory` slot and
-  registers the context engine capability at runtime.
-- **Memory runtime bridge** - routes built-in `memory_search` calls to the same
-  libraVDB-backed daemon on hosts that expose the runtime API.
-- **Three memory scopes** - keeps active session, durable user, and global memory
-  separate.
-- **Hybrid retrieval** - blends semantic similarity, scope, recency, and summary
-  quality instead of relying on cosine similarity alone.
-- **Continuity-aware assembly** - preserves the recent working tail while fitting
-  recalled memory into a bounded prompt budget.
-- **Sidecar compaction** - summarizes older session turns without flattening the
-  newest working context.
-- **Local-first inference** - uses local embedding and compaction paths by
-  default, with optional external summarizer configuration.
-- **Explicit service lifecycle** - the npm/OpenClaw package stays connect-only;
-  `libravdbd` is installed and supervised separately.
+- **Unified Cognitive Scoring** - moves beyond standard semantic search by mathematically blending cosine similarity with frequency, recency, authored salience, and cognitive authority composite weights (`ω(c)`).
+- **Topological Causal Graphs** - internally models temporal memory chains via directed acyclic graphs (`WhyIDs`), injecting causal proximity into retrieval scoring to anticipate temporally connected context.
+- **Zero-GC Slab Allocation** - manages model tensor and inference data via a custom contiguous slab allocator (`slabby`), completely bypassing Go garbage collection pauses during high-throughput memory assembly.
+- **Deontic & Salience Retrieval** - applies structural authority weightings and deontic logic rules to ensure critical behavioral constraints mathematically outrank conversational chatter.
+- **Matryoshka Representation Learning** - natively supports dynamically tiered embedding dimensions (e.g., slicing 768d vectors down to 64d) for ultra-fast cascading coarse search followed by precision reranking.
+- **Cognitive Routing Circuit Breakers** - strictly monitors remote endpoint health via stateful circuit breakers that trip and safely auto-disable complex ML routing during downstream outages, preserving foundational search uptime.
+- **Zero-ML Local Compaction** - evaluates contextual gating thresholds to execute purely localized session summarization and compaction cycles natively within the vector service.
+- **True multi-tenancy** - routes multiple OpenClaw agents to strictly isolated, per-agent vector databases within a single lightweight vector service process.
+- **Zero-copy caching** - shares a memory-mapped, cross-tenant embedding cache across all active agents to keep hardware utilization incredibly low.
+- **Three memory scopes** - keeps active session, durable user, and global memory separate.
+- **Local-first inference** - uses local embedding paths by default, with optional remote model configurations.
+- **Operational tooling** - provides a dedicated CLI (`libravdbd status`, `migrate`, `tenant evict`) for live observability and safe health management without interrupting active sessions.
+- **Explicit service lifecycle** - the npm/OpenClaw package stays connect-only; `libravdbd` is installed and supervised separately over a secure gRPC transport.
 
 ## Embedding Backend Providers
 
@@ -205,8 +193,111 @@ All keys are optional. For the full reference, see [Configuration](./docs/config
 | `embeddingModelPath` | string | — | Required with `embeddingBackend: "onnx-local"`; directory containing `embedding.json`, `model.onnx`, and `tokenizer.json` |
 | `onnxDevice` | string | `cpu` | ONNX execution provider; `cpu` is the default; `auto` lets libravdbd auto-detect |
 | `userId` | string | auto-derived | Stable identity for cross-session durable memory |
+| `tenantId` | string | auto-derived | Multi-tenant identifier. Isolates the agent to a dedicated `.libravdb` file. Defaults to `userId` if unset. |
 | `crossSessionRecall` | boolean | `true` | When `false`, only session-scoped memories are retrieved |
 | `compactSessionTokenBudget` | number | `2000` | Auto-compaction token threshold; `0` disables |
+
+## Multi-Tenant Support
+
+`libravdbd` supports true multi-tenancy, allowing you to run multiple OpenClaw agents on the same machine with completely isolated vector databases. By default, the plugin connects to a single tenant database named after your `userId`.
+
+If you want to run multiple distinct agents (e.g., a "research-agent" and a "coding-agent"), you can assign each a unique `tenantId` in the OpenClaw configuration:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "libravdb-memory": {
+        "enabled": true,
+        "config": {
+          "tenantId": "research-agent"
+        }
+      }
+    }
+  }
+}
+```
+
+The vector service will seamlessly route the agent's requests to a dedicated, isolated vector database file. It manages all tenant instances efficiently within a single process and automatically shares a centralized, memory-mapped embedding cache to keep hardware usage incredibly low.
+
+### Directory Structure
+
+When running in multi-tenant mode, the vector service automatically scaffolds an isolated directory structure inside your configured `agent_db_root` (or the default profile directory). It scopes databases to the specific embedding model in use:
+
+```
+~/.libravdbd/data_nomic-embed-text-v1_5/
+├── _internal:dedupe.libravdb      # Cross-session deduplication state
+├── _internal:registry.libravdb    # Tenant registry and health logs
+└── agents/
+    ├── research-agent.libravdb    # Isolated database for research-agent
+    ├── coding-agent.libravdb      # Isolated database for coding-agent
+    └── my-default-user.libravdb   # Isolated database for default user
+```
+
+### Multi-Tenant Operations
+
+The vector service exposes tenant-aware operational commands:
+
+```bash
+# View global vector service health, cache stats, and all active tenant footprints
+libravdbd status
+
+# Evict a specific tenant from memory without shutting down the vector service
+libravdbd tenant evict <tenantId>
+
+# Safely migrate an old single-tenant DB to a named tenant
+libravdbd migrate --from ~/.libravdbd/data.libravdb --tenant <tenantId>
+```
+
+## Vector Service Configuration (YAML) & Kubernetes
+
+`libravdbd` is heavily configurable via environment variables or a YAML configuration file. The vector service looks for `config.yaml` in this order:
+1. `LIBRAVDB_CONFIG=/path/to/config.yaml`
+2. `/etc/libravdbd/config.yaml`
+3. `~/.libravdbd/config.yaml`
+
+Example `config.yaml` for a Kubernetes StatefulSet deployment in multi-tenant mode:
+
+```yaml
+# /etc/libravdbd/config.yaml
+agent_db_root: "/var/lib/libravdbd/agents"
+tenant_mode: "auto"
+tenant_max_open: 128
+grpc_endpoint: "tcp:0.0.0.0:9090"
+embedding_backend: "gguf"
+embedding_profile: "nomic-embed-text-v1.5"
+drain_timeout: "25s" # Must be less than k8s terminationGracePeriodSeconds
+```
+
+## Securing gRPC with mTLS
+
+For distributed deployments where `libravdbd` and OpenClaw run on different machines, you must secure the TCP transport using Mutual TLS (mTLS).
+
+**1. Generate Local Certificates:**
+```bash
+# 1. Generate Certificate Authority (CA)
+openssl req -x509 -newkey rsa:4096 -days 3650 -nodes -keyout ca.key -out ca.crt -subj "/CN=LibraVDB-CA"
+
+# 2. Generate Vector Service Server Certificate
+openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN=libravdbd.local"
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 365
+
+# 3. Generate Client Certificate (For OpenClaw plugins)
+openssl req -newkey rsa:2048 -nodes -keyout client.key -out client.csr -subj "/CN=openclaw-client"
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out client.crt -days 365
+```
+
+**2. Configure the Vector Service:**
+Add the generated TLS paths to your vector service's `config.yaml`:
+```yaml
+grpc_endpoint: "tcp:0.0.0.0:9090"
+grpc_tls_cert: "/etc/libravdbd/certs/server.crt"
+grpc_tls_key: "/etc/libravdbd/certs/server.key"
+grpc_tls_ca: "/etc/libravdbd/certs/ca.crt" # Enforces mTLS client verification
+```
+
+**3. Connect Your Client:**
+Secure external clients or downstream OpenClaw agents by passing the TLS client certificates to the gRPC connection transport.
 
 ## Optional Features
 
@@ -214,6 +305,55 @@ All keys are optional. For the full reference, see [Configuration](./docs/config
   and syncs eligible notes into memory. See [Features](./docs/features.md).
 - **Dream promotion** promotes vetted dream diary bullets into an isolated
   `dream:{userId}` collection. See [Features](./docs/features.md).
+
+### Dream Promotion
+
+OpenClaw's dreaming cron writes AI-generated memory reflections to a dream diary
+markdown file. The plugin can watch this file and automatically promote vetted
+entries into the daemon's `dream:{userId}` durable collection.
+
+Enable by adding these config keys:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "libravdb-memory": {
+        "config": {
+          "dreamPromotionEnabled": true,
+          "dreamPromotionUserId": "<your-user-id>",
+          "dreamPromotionDiaryPath": "~/DREAMS.md"
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `dreamPromotionEnabled` | boolean | yes | Enable the dream diary file watcher |
+| `dreamPromotionUserId` | string | yes | User ID whose `dream:` collection receives promoted entries |
+| `dreamPromotionDiaryPath` | string | yes | Path to the dream diary markdown file (supports `~`) |
+| `dreamPromotionDebounceMs` | number | no | Debounce delay before scanning after a change (default: `150`) |
+
+The diary file is standard markdown. Entries under a `## Deep Sleep` or
+`## Dream Promotion` heading are parsed as bullet points with trailing metadata:
+
+```markdown
+## Dream Promotion
+- A key insight about the user's workflow patterns {score=0.85, recall=4, unique=3}
+- Another consolidated observation {score=0.72, recall=2, unique=2}
+```
+
+Entries are promoted to `dream:<userId>` and surfaced when the user asks
+dream-related questions (e.g. "what did I dream about?").
+
+You can also promote manually without enabling the watcher:
+
+```bash
+openclaw memory dream-promote --user-id <userId> --dream-file ~/DREAMS.md
+```
 - **Embedding profiles** default to `nomic-embed-text-v1.5` with `bge-small-en-v1.5`
   fallback. See [Embedding profiles](./docs/embedding-profiles.md).
 

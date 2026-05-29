@@ -49,16 +49,29 @@ jobs:
           ref: main
           path: libravdb-contracts
 
-      - name: Diagnostic checkout snapshot
+      - name: Verify contracts version alignment
         run: |
-          echo "plugin HEAD: $(git -C openclaw-memory-libravdb rev-parse HEAD)"
-          echo "contracts HEAD: $(git -C libravdb-contracts rev-parse HEAD)"
-          echo "plugin package.json:"
-          sed -n '1,80p' openclaw-memory-libravdb/package.json
-          echo "contracts package.json:"
-          sed -n '1,80p' libravdb-contracts/package.json
-          echo "contracts lockfile @types/node hits:"
-          grep -n '@types/node' libravdb-contracts/pnpm-lock.yaml || true
+          CONTRACTS_VERSION=$(node -p "require('./libravdb-contracts/package.json').version")
+          PLUGIN_EXPECTED=$(node -p "require('./openclaw-memory-libravdb/package.json').dependencies['@xdarkicex/libravdb-contracts']")
+          echo "contracts source version: $CONTRACTS_VERSION"
+          echo "plugin expects: $PLUGIN_EXPECTED"
+
+          # Verify the plugin's lockfile resolves to a version >= contracts source.
+          # If the lockfile is behind, the plugin ships stale generated types.
+          LOCKED_VERSION=$(grep -A1 '@xdarkicex/libravdb-contracts@' openclaw-memory-libravdb/pnpm-lock.yaml | grep 'version:' | awk '{print $2}' | tr -d '"' | head -1)
+          echo "lockfile resolves to: ${LOCKED_VERSION:-none}"
+
+          if [ "$LOCKED_VERSION" != "$CONTRACTS_VERSION" ]; then
+            echo ""
+            echo "ERROR: Lockfile contracts version (${LOCKED_VERSION:-none}) != contracts source (${CONTRACTS_VERSION})."
+            echo "Update the plugin to the latest contracts before publishing:"
+            echo "  cd openclaw-memory-libravdb"
+            echo "  pnpm update @xdarkicex/libravdb-contracts@^${CONTRACTS_VERSION}"
+            echo "  git add pnpm-lock.yaml package.json"
+            echo "  git commit -m 'deps: bump contracts to v${CONTRACTS_VERSION}'"
+            exit 1
+          fi
+          echo "Contracts version aligned."
 
       - uses: bufbuild/buf-setup-action@v1
         with:

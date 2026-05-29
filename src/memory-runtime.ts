@@ -257,12 +257,13 @@ function parseMetadataJson(item: { metadataJson?: Uint8Array }): Record<string, 
 function toMemorySearchResult(item: ProtoSearchResult) {
   const meta = parseMetadataJson(item);
   const collection = typeof meta.collection === "string" ? meta.collection : "memory";
+  const effectiveText = item.text || (typeof meta.text === "string" ? meta.text : "") || "";
   return {
     path: encodeSearchResultPath(collection, item.id),
     startLine: 1,
-    endLine: Math.max(1, item.text.split("\n").length),
+    endLine: Math.max(1, effectiveText.split("\n").length),
     score: item.score,
-    snippet: item.text,
+    snippet: effectiveText,
     source: collection.startsWith("session:") || collection.startsWith("session_") ? "sessions" : "memory",
     citation: `${collection}:${item.id}`,
   };

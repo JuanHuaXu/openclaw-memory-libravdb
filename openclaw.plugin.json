@@ -63,6 +63,10 @@
       "sidecarPath": {
         "type": "string"
       },
+      "tenantId": {
+        "type": "string",
+        "description": "Stable tenant identifier for multi-agent deployments. When set, the daemon routes this plugin instance to an isolated vector database. When unset, the plugin falls back to the auto-derived userId. Set different values per agent to isolate memory storage."
+      },
       "userId": {
         "type": "string",
         "description": "Stable identity for cross-session durable memory. When set, sessions share memories under user:{userId}."
@@ -440,7 +444,8 @@
       },
       "rpcTimeoutMs": {
         "type": "number",
-        "default": 30000
+        "default": 120000,
+        "description": "gRPC timeout in milliseconds for daemon calls. Default: 120000 (2 min). Can also be set via LIBRAVDB_RPC_TIMEOUT_MS env var."
       },
       "maxRetries": {
         "type": "number"

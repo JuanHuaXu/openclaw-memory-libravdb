@@ -1,12 +1,14 @@
 import { LibravDBClient, resolveClientEndpoint } from "./libravdb-client.js";
 import type { LoggerLike, PluginConfig } from "./types.js";
 import { formatError } from "./format-error.js";
+import { resolveTenantKey } from "./identity.js";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 
 export type ClientGetter = () => Promise<LibravDBClient>;
-export const DEFAULT_RPC_TIMEOUT_MS = 30000;
+export const DEFAULT_RPC_TIMEOUT_MS = 120_000;
 export const STARTUP_HEALTH_TIMEOUT_MS = 2000;
+const ENV_RPC_TIMEOUT_MS = Number(process.env.LIBRAVDB_RPC_TIMEOUT_MS) || 0;
 
 export const VALID_TLS_MODES = ["auto", "tls", "insecure"] as const;
 export type ValidTlsMode = typeof VALID_TLS_MODES[number];
@@ -14,7 +16,8 @@ const isTlsModeValid = (m: string): m is ValidTlsMode =>
   VALID_TLS_MODES.includes(m as ValidTlsMode);
 
 export function resolveStartupHealthTimeoutMs(cfg: PluginConfig): number {
-  return Math.max(STARTUP_HEALTH_TIMEOUT_MS, cfg.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS);
+  const timeout = cfg.rpcTimeoutMs ?? (ENV_RPC_TIMEOUT_MS || DEFAULT_RPC_TIMEOUT_MS);
+  return Math.max(STARTUP_HEALTH_TIMEOUT_MS, timeout);
 }
 
 export interface LifecycleHint {
@@ -97,11 +100,12 @@ export function createPluginRuntime(
 
         client = new LibravDBClient({
           endpoint: cfg.grpcEndpoint || cfg.sidecarPath,
-          timeoutMs: cfg.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS,
+          timeoutMs: cfg.rpcTimeoutMs ?? (ENV_RPC_TIMEOUT_MS || DEFAULT_RPC_TIMEOUT_MS),
           tlsCaPath: cfg.grpcEndpointTlsCa,
           tlsMode: cfg.grpcEndpointTlsMode,
           tlsClientCertPath: cfg.grpcEndpointTlsClientCert,
           tlsClientKeyPath: cfg.grpcEndpointTlsClientKey,
+          tenantKey: resolveTenantKey(cfg),
         });
 
         await client.bootstrapHandshake();

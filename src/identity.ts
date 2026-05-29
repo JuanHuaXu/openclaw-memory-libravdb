@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { execSync } from "node:child_process";
-import type { LoggerLike } from "./types.js";
+import type { LoggerLike, PluginConfig } from "./types.js";
 
 /**
  * Resolves the identity file path, respecting OpenClaw's state directory conventions.
@@ -180,4 +180,25 @@ export function resolveIdentity(params: {
     );
   }
   return { userId: autoId, source: "auto" };
+}
+
+/**
+ * Resolves a stable tenant key for multi-agent DB routing.
+ *
+ * Priority chain:
+ *   1. cfg.tenantId (explicit config, highest priority)
+ *   2. LIBRAVDB_AGENT_ID env var (container/CI override)
+ *   3. Fall back to resolved userId (existing identity system)
+ */
+export function resolveTenantKey(cfg: PluginConfig): string {
+  const explicit = cfg.tenantId?.trim();
+  if (explicit) return explicit;
+
+  const envId = process.env.LIBRAVDB_AGENT_ID?.trim();
+  if (envId) return envId;
+
+  return resolveIdentity({
+    configUserId: cfg.userId,
+    identityPath: cfg.identityPath,
+  }).userId;
 }

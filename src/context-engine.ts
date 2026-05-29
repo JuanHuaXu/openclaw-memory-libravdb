@@ -13,6 +13,7 @@ import {
 } from "@xdarkicex/libravdb-contracts";
 import { resolveIdentity, type ResolvedIdentity } from "./identity.js";
 import { resolveUserCollection } from "./memory-scopes.js";
+import { manifestStore } from "./manifest.js";
 
 type KernelCompatibleMessage = {
   role: string;
@@ -547,7 +548,7 @@ export function normalizeKernelMessage(message: {
   return {
     role: message.role,
     content: normalizeKernelContent(message.content),
-    ...(typeof message.id === "string" ? { id: message.id } : {}),
+    id: message.id || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
   };
 }
 
@@ -654,9 +655,14 @@ function escapeMemoryFactText(text: string): string {
 }
 
 // Tool-call pattern detection for sanitization
-const TOOL_CALL_BRACKET_RE = /\[tool:([^\]]+)\]/gi;
-const TOOL_CALL_JSON_RE = /\{\s*"name"\s*:\s*"([^"]+)"[^}]*\}/g;
-const TOOL_RESULT_ANNOTATION_RE = /\[tool:[^\]]+\](?:\s*[^{\[]*)?/g;
+// Matches [tool:name] followed by optional whitespace and any trailing JSON object {...}, array [...], or string "..."
+const TOOL_CALL_BRACKET_RE = /\[tool:([^\]]+)\](?:\s*(?:\{[\s\S]*?\}|\[[\s\S]*?\]|".*?"))?/gi;
+
+// Matches raw JSON tool-call objects targeting a "name\" field
+const TOOL_CALL_JSON_RE = /\{\s*"name"\s*:\s*"([^"]+)"[\s\S]*?\}/g;
+
+// Matches older annotations, aggressively consuming trailing characters on the same line
+const TOOL_RESULT_ANNOTATION_RE = /\[tool:[^\]]+\][^\n]*/g;
 
 /**
  * Sanitizes text that may contain tool-call syntax to prevent loop-priming.
@@ -955,9 +961,10 @@ export function normalizeAssembleResult(
       }
 
       if (isRealTranscript) {
+        // BUG PATH A SEALED: Sanitize the content before pushing to the trajectory
         messages.push({
           role: message.role === "user" ? "user" : "assistant",
-          content,
+          content: sanitizeToolCallPatterns(content),
           ...(typeof message.id === "string" ? { id: message.id } : {}),
         });
       } else {
@@ -1525,16 +1532,34 @@ export function buildContextEngineFactory(
         userIdOverride: args.userId,
         sessionKey: args.sessionKey,
       });
+
+      // Load manifest and normalize messages in parallel
+      const manifest = manifestStore.load(sessionId, logger);
       const afterTurnMessages = selectAfterTurnMessages(args.messages, args.prePromptMessageCount, logger);
       const messages = normalizeKernelMessages(afterTurnMessages);
-      const ingestMessages = boundAfterTurnMessagesForIngest(messages, logger, sessionId);
-      const msgCount = messages.length;
+
+      // Find overlap: messages already in our manifest
+      const overlapIndex = manifestStore.findOverlapIndex(manifest, messages);
+      const newMessages = messages.slice(overlapIndex);
+
+      // Apply token budget cap only to new messages
+      const ingestMessages = boundAfterTurnMessagesForIngest(newMessages, logger, sessionId);
+
+      const startIndex = manifestStore.deriveStartingIndex(manifest, args.prePromptMessageCount) + overlapIndex;
+      const cursor = {
+        lastProcessedIndex: startIndex > 0 ? startIndex - 1 : 0,
+        sessionVersion: manifest.version,
+        manifestTailHash: manifest.tailHash,
+      };
+
       logger.info?.(
         `LibraVDB afterTurn sessionId=${sessionId} userId=${userId} ` +
-        `messageCount=${msgCount} totalMessages=${args.messages.length} ` +
+        `messageCount=${messages.length} newMessages=${newMessages.length} ` +
+        `overlapIndex=${overlapIndex} startIndex=${startIndex} ` +
         `prePromptMessageCount=${args.prePromptMessageCount ?? "unknown"} ` +
         `heartbeat=${args.isHeartbeat ?? false}`,
       );
+
       try {
         const client = await runtime.getClient();
         const currentTokenCount = normalizeCurrentTokenCount(
@@ -1547,8 +1572,53 @@ export function buildContextEngineFactory(
           sessionKey: args.sessionKey,
           userId,
           messages: ingestMessages,
+          prePromptMessageCount: args.prePromptMessageCount,
           isHeartbeat: args.isHeartbeat,
-        });
+          cursor,
+        } as Parameters<typeof client.afterTurnKernel>[0]);
+
+        // Reconcile manifest with daemon-confirmed cursor.
+        // The daemon returns a cursor even when it ingests zero messages
+        // (e.g. gap detected, all messages deduped). Trust its
+        // lastProcessedIndex over our optimistic startIndex math.
+        const daemonCursor = (result as Record<string, unknown>).cursor as
+          | { lastProcessedIndex: number; sessionVersion: number; manifestTailHash: string }
+          | undefined;
+
+        if (daemonCursor) {
+          if (!daemonCursor.manifestTailHash) {
+            // Daemon detected a gap: its DB is behind our manifest.
+            // It did NOT ingest our messages. Reset the manifest so the
+            // next turn does a full re-sync.
+            logger.warn?.(
+              `[LibraVDB] Daemon reported cursor gap for session ${sessionId}. ` +
+              `Resetting manifest for full re-sync next turn.`,
+            );
+            manifestStore.save(manifestStore.createEmpty(sessionId));
+          } else if (ingestMessages.length > 0) {
+            // Normal path: reconcile to what the daemon actually confirmed.
+            const confirmedIndex = daemonCursor.lastProcessedIndex;
+            const ackCount = Math.max(0, confirmedIndex - startIndex + 1);
+            if (ackCount > 0) {
+              const ackedMessages = ingestMessages.slice(0, ackCount);
+              const updatedManifest = manifestStore.appendACKedMessages(
+                manifest,
+                ackedMessages,
+                startIndex,
+              );
+              manifestStore.save(updatedManifest);
+            }
+          }
+        } else if (ingestMessages.length > 0) {
+          // Legacy daemon (no cursor in response): optimistic ACK.
+          const updatedManifest = manifestStore.appendACKedMessages(
+            manifest,
+            ingestMessages,
+            startIndex,
+          );
+          manifestStore.save(updatedManifest);
+        }
+
         await performAfterTurnPredictiveCompaction({
           sessionId,
           messages,

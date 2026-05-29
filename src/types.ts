@@ -3,6 +3,11 @@ export interface PluginConfig {
   dbPath?: string;
   /** Legacy fallback alias for grpcEndpoint. */
   sidecarPath?: string;
+  /** Stable tenant identifier for multi-agent deployments. When set, the daemon
+   *  routes this plugin instance to an isolated vector database. When unset,
+   *  the plugin falls back to the auto-derived userId. Set different values per
+   *  agent to isolate memory storage. */
+  tenantId?: string;
   /** Stable identity for cross-session durable memory. When set, all sessions
    *  share memories under user:{userId}. When unset, the plugin auto-derives
    *  identity from the OS and persists it to the identity file. */
