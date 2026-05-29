@@ -7,13 +7,14 @@ import { createDreamPromotionHandle } from "./dream-promotion.js";
 import { createMarkdownIngestionHandle } from "./markdown-ingest.js";
 import { buildMemoryPromptSection } from "./memory-provider.js";
 import { buildMemoryRuntimeBridge } from "./memory-runtime.js";
+import { createLibraVdbMemoryTools } from "./memory-tools.js";
 import { createPluginRuntime } from "./plugin-runtime.js";
 import type { PluginConfig } from "./types.js";
 
 export const MEMORY_ID = "libravdb-memory";
 
 const LIGHTWEIGHT_MODES = new Set(["cli-metadata", "setup-only"]);
-const RUNTIME_CLEANUP_SHUTDOWN_REASONS = new Set(["delete", "restart"]);
+const RUNTIME_CLEANUP_SHUTDOWN_REASONS = new Set(["delete"]);
 
 export function shouldShutdownRuntimeForLifecycleCleanup(reason: string): boolean {
   return RUNTIME_CLEANUP_SHUTDOWN_REASONS.has(reason);
@@ -67,6 +68,13 @@ export function register(api: OpenClawPluginApi) {
     ? null
     : createPluginRuntime(cfg, logger);
   registerMemoryCli(api, runtimeOrNull, cfg, logger);
+
+  const ownsMemorySlot = memSlot === MEMORY_ID;
+  if (runtimeOrNull && ownsMemorySlot) {
+    const memoryTools = createLibraVdbMemoryTools(runtimeOrNull.getClient, cfg, logger);
+    api.registerTool?.((ctx) => memoryTools.createSearchTool(ctx), { names: ["memory_search"] });
+    api.registerTool?.((ctx) => memoryTools.createGetTool(ctx), { names: ["memory_get"] });
+  }
 
   if (isLightweight || isDiscovery) {
     if (!isLightweight) {
