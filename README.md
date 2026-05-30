@@ -176,6 +176,22 @@ openclaw memory journal --limit 50
 openclaw memory dream-promote --user-id <userId> --dream-file ~/DREAMS.md
 ```
 
+### Vector Service CLI (libravdbd v1.5.0+)
+
+```bash
+# Service health and status
+libravdbd status                    # tenants, cache, DB sizes
+libravdbd health                    # OK/UNHEALTHY
+
+# Search tenant memory (same collections memory_search queries)
+libravdbd search --tenant <key> -k 10 "query"
+libravdbd search --tenant <key> --session <id> -k 10 "query"
+
+# Tenant management
+libravdbd tenant evict <key>        # force-close a tenant DB
+libravdbd migrate                   # run pending DB migrations
+```
+
 Use [Install](./docs/install.md) for service lifecycle commands and
 [Uninstall](./docs/uninstall.md) for safe shutdown and removal.
 
