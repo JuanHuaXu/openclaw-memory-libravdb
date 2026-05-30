@@ -9,7 +9,7 @@
   <a href="./package.json"><img src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5.x"></a>
   <a href="./openclaw.plugin.json"><img src="https://img.shields.io/badge/OpenClaw-memory%20plugin-111827" alt="OpenClaw memory plugin"></a>
   <a href="https://www.npmjs.com/package/@xdarkicex/openclaw-memory-libravdb"><img src="https://img.shields.io/npm/v/%40xdarkicex%2Fopenclaw-memory-libravdb?label=release&color=5B21B6" alt="Release"></a>
-  <a href="https://discord.gg/s89ZCY7G"><img src="https://img.shields.io/badge/Discord-LibraVDB-5865F2?logo=discord&logoColor=white" alt="LibraVDB Discord"></a>
+  <a href="https://discord.gg/DWn4BpRQAS"><img src="https://img.shields.io/badge/Discord-LibraVDB-5865F2?logo=discord&logoColor=white" alt="LibraVDB Discord"></a>
 </div>
 
 `@xdarkicex/openclaw-memory-libravdb` is a local-first OpenClaw memory plugin
