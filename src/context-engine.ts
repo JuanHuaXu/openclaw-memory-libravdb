@@ -1701,6 +1701,11 @@ export function buildContextEngineFactory(
               ),
               estimatedTokens: enforced.estimatedTokens + section.tokens,
             };
+            logger.info?.(
+              `LibraVDB predictive context injected sessionId=${sessionId} ` +
+              `items=${section.injectedCount}/${predictions.length} ` +
+              `tokens=${section.tokens}`,
+            );
           }
         }
         enforced = enforceTokenBudgetInvariant(enforced, args.tokenBudget);
@@ -1878,6 +1883,14 @@ export function buildContextEngineFactory(
             if (oldest !== undefined) predictiveContextCache.delete(oldest);
           }
           predictiveContextCache.set(sessionId, predictions);
+          logger.info?.(
+            `LibraVDB predictive graph returned predictions sessionId=${sessionId} ` +
+            `count=${predictions.length}`,
+          );
+        } else {
+          logger.info?.(
+            `LibraVDB predictive graph returned no predictions sessionId=${sessionId}`,
+          );
         }
         return result;
       } catch (error) {
