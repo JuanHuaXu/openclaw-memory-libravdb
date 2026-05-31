@@ -183,6 +183,13 @@ If your service runs elsewhere, set `sidecarPath`:
 - **Local-first inference** — GGUF, ONNX, or remote embedding backends. Hardware-native acceleration on Apple Silicon and NVIDIA.
 - **Pluggable compaction backend** — exposes the vector service's extractive summarization as an OpenClaw `CompactionProvider` — replaces LLM summarization.
 - **Operational tooling** — dedicated CLI (`libravdbd status`, `health`, `search`, `migrate`, `tenant evict`) for live observability.
+- **Half-Life Decay per Cognitive Kind** — each memory kind decays at its own rate: identity, constraint, and decision have infinite half-life (permanent); facts decay over 180 days; preferences over 365 days. Mathematical support accumulation prevents thrashing.
+- **Deterministic State Skeleton (L8)** — extracts structured decisions, constraints, and next steps from raw turns using pure heuristics — no LLM call needed. Line-level scoring with commitment-verb and future-intent detection.
+- **Deterministic Tool Output Compression** — 3-phase compression of tool outputs before summarization: JSON key sampling, log-line deduplication (FNV-64a), and fenced-block tagging. Reduces token pressure without losing deontic markers.
+- **Seven Budget Channels** — waterfall token allocation across retrieval floor, mandatory continuity tail, hard-authored items, elevated guidance, soft-authored items, retrieval remainder, and recovery reserve. Each channel has its own budget fraction.
+- **Temporal Comparison Profiling** — witness scoring with diachronicity detection for "how did this change?" queries. Slot decomposition, discriminative membership, and position-weighted specificity.
+- **Merkle Chain Ingest** — content-hash-based session manifest with cursor reconciliation between plugin and vector service. Guarantees idempotent ingestion across crashes and retries.
+- **Nonce-Chaining HMAC Auth** — per-request challenge-response authentication with single-use cryptographic nonces. Supports mTLS for secure multi-machine deployments.
 - **Explicit service lifecycle** — the npm/OpenClaw package stays connect-only; `libravdbd` is installed and supervised separately over a secure gRPC transport.
 
 ## Embedding Backend Providers
