@@ -14,6 +14,8 @@ import path from "node:path";
 import type {
   AfterTurnKernelRequest,
   AfterTurnKernelResponse,
+  BeforeTurnKernelRequest,
+  BeforeTurnKernelResponse,
   AssembleContextInternalRequest,
   AssembleContextInternalResponse,
   BootstrapSessionKernelRequest,
@@ -55,6 +57,10 @@ import type {
   SearchTextResponse,
   SessionLifecycleHintRequest,
   SessionLifecycleHintResponse,
+  SummarizeMessagesRequest,
+  SummarizeMessagesResponse,
+  ExpandSummaryRequest,
+  ExpandSummaryResponse,
 } from "@xdarkicex/libravdb-contracts";
 
 export interface LibravDBClientOptions {
@@ -469,6 +475,13 @@ export class LibravDBClient {
     return this.client.afterTurnKernel(req);
   }
 
+  async beforeTurnKernel(
+    req: PartialMessage<BeforeTurnKernelRequest>,
+  ): Promise<BeforeTurnKernelResponse> {
+    this.guardOpen();
+    return this.client.beforeTurnKernel(req);
+  }
+
   async assembleContextInternal(
     req: PartialMessage<AssembleContextInternalRequest>,
   ): Promise<AssembleContextInternalResponse> {
@@ -481,6 +494,20 @@ export class LibravDBClient {
   ): Promise<CompactSessionResponse> {
     this.guardOpen();
     return this.client.compactSession(req);
+  }
+
+  async summarizeMessages(
+    req: PartialMessage<SummarizeMessagesRequest>,
+  ): Promise<SummarizeMessagesResponse> {
+    this.guardOpen();
+    return this.client.summarizeMessages(req);
+  }
+
+  async expandSummary(
+    req: PartialMessage<ExpandSummaryRequest>,
+  ): Promise<ExpandSummaryResponse> {
+    this.guardOpen();
+    return this.client.expandSummary(req);
   }
 
   async rankCandidates(

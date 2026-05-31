@@ -166,6 +166,21 @@
       "section7RecencyAccessLambda": {
         "type": "number"
       },
+      "section7AuthorityAccessWeight": {
+        "type": "number"
+      },
+      "subagentTokenBudget": {
+        "type": "number"
+      },
+      "beforeTurnEnabled": {
+        "type": "boolean"
+      },
+      "beforeTurnTimeoutMs": {
+        "type": "number"
+      },
+      "beforeTurnMaxMemories": {
+        "type": "number"
+      },
       "embeddingRuntimePath": {
         "type": "string",
         "description": "Path to the ONNX Runtime library visible to the daemon, for example /opt/homebrew/opt/libravdbd/models/onnxruntime/lib/libonnxruntime.dylib or /home/node/.openclaw/libravdbd/models/onnxruntime/lib/libonnxruntime.so."

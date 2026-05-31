@@ -3,13 +3,17 @@ import type { PluginConfig } from "./types.js";
 import type { ClientGetter } from "./plugin-runtime.js";
 
 const MEMORY_PROMPT_HEADER = [
-  "## Memory",
-  "LibraVDB persistent memory is configured. Every turn is auto-ingested",
-  "into the vector store — you do not need to explicitly save anything.",
-  "When asked about past conversations, facts, preferences, decisions,",
-  "or anything the user might have told you before, call `memory_search`",
-  "once per user question. Do not answer from memory until you have",
-  "called it. Once you have results, use them — do not re-call.",
+  "## LibraVDB Memory",
+  "Every turn is auto-ingested into the vector store — you do not need",
+  "to explicitly save anything. When asked about past conversations,",
+  "facts, preferences, decisions, or anything the user might have told",
+  "you before, call `memory_search` once per user question. Do not",
+  "answer from memory until you have called it. Once you have results,",
+  "use them — do not re-call in the same turn.",
+  "",
+  "Conversations are captured automatically. Never say \"I'll remember",
+  "that,\" \"I've saved this,\" \"noted,\" or similar — these phrases suggest",
+  "manual effort where none exists. Just act on the request.",
   "",
 ] as const;
 
@@ -17,18 +21,67 @@ function buildToolGuidance(availableTools: ReadonlySet<string> | undefined): str
   if (!availableTools?.has("memory_search")) {
     return [];
   }
-  return [
+
+  const lines: string[] = [];
+
+  lines.push(
     "Call `memory_search` once per user question for prior turns, remembered",
     "facts, earliest interactions, and channel history. Do not answer memory",
     "questions from prior transcript claims — perform a search every time.",
     "After receiving results, use them directly; do not re-call in the same turn.",
-    "For earliest or oldest questions, request enough results and compare timestamps.",
     ...(availableTools.has("memory_get")
       ? ["After a `memory_search` hit, call `memory_get` when exact wording or more context is needed."]
       : []),
-    "LibraVDB memory is vector-backed and retrieved through tools, not files.",
     "",
-  ];
+  );
+
+  // ── Summaries / recall (when available) ──
+  const hasDescribe = availableTools.has("memory_describe");
+  const hasExpand = availableTools.has("memory_expand");
+  const hasGrep = availableTools.has("memory_grep");
+
+  if (hasDescribe || hasExpand || hasGrep) {
+    lines.push(
+      "**Compacted summaries — recall hierarchy (cheap → expensive):**",
+      "",
+      "Summaries in search results show `[Summary sum_xxx]: [eviction cue]`.",
+      "The cue lists what the summary covers — anchors (files, tools, versions),",
+      "decisions, constraints, and signal counts. Many questions can be answered",
+      "from the cue alone without expanding.",
+      "",
+    );
+
+    if (hasDescribe) {
+      lines.push(
+        "1. `memory_describe(summaryId)` — inspect a summary's metadata.",
+        "   Returns eviction cues, child count, and source turn range.",
+        "   Cheap — use this to decide whether expansion is worth it.",
+      );
+    }
+    if (hasExpand) {
+      lines.push(
+        "2. `memory_expand(summaryIds)` — deep recall. Walks the summary tree",
+        "   and returns full detail. Use when the eviction cue signals specific",
+        "   details you need. For large expansions may spawn a sub-agent to",
+        "   protect your context window.",
+      );
+    }
+    if (hasGrep) {
+      lines.push(
+        "3. `memory_grep(pattern)` — search compacted history by text or regex.",
+        "   Returns snippets with summary/turn IDs for follow-up.",
+      );
+    }
+    lines.push(
+      "",
+      "**Do not guess specifics from a summary cue — expand if in doubt.**",
+      "",
+    );
+  }
+
+  lines.push("LibraVDB memory is vector-backed and retrieved through tools, not files.", "");
+
+  return lines;
 }
 
 export function buildMemoryPromptSection(
@@ -39,8 +92,6 @@ export function buildMemoryPromptSection(
     availableTools,
     citationsMode: _citationsMode,
   }): string[] {
-    // OpenClaw builds the memory prompt section synchronously for embedded runs.
-    // Actual retrieval and ranking happen in the context engine during assemble().
     return [...MEMORY_PROMPT_HEADER, ...buildToolGuidance(availableTools)];
   };
 }

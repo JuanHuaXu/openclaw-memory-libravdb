@@ -86,6 +86,16 @@ const MEMORY_SEARCH_SCHEMA = {
       enum: ["memory", "wiki", "all", "sessions"],
       description: "Corpus filter. LibraVDB serves memory/session hits; wiki is unsupported unless another plugin owns wiki tools.",
     },
+    kind: {
+      type: "string",
+      enum: ["identity", "fact", "preference", "constraint", "decision", "episode"],
+      description: "Cognitive kind filter. Only return memories of this kind. Use 'constraint' to retrieve operating boundaries, 'decision' for past decisions, etc.",
+    },
+    signals: {
+      type: "array",
+      items: { type: "string", enum: ["deontic", "identity", "preference", "factual", "temporal"] },
+      description: "Signal bitmask filter. Only return memories carrying at least one of these signals.",
+    },
   },
   required: ["query"],
 } as const;
@@ -156,6 +166,8 @@ export function createLibraVdbMemoryTools(
           const params = asToolParamsRecord(rawParams);
           const query = readRequiredStringParam(params, "query");
           const corpus = readMemoryCorpus(params.corpus);
+          const kind = typeof params.kind === "string" ? params.kind : undefined;
+          const signals = Array.isArray(params.signals) ? (params.signals as string[]).filter((s): s is string => typeof s === "string") : undefined;
           const maxResults = readNumberParam(params, "maxResults", { integer: true });
           const minScore = readNumberParam(params, "minScore");
 
@@ -174,6 +186,8 @@ export function createLibraVdbMemoryTools(
               corpus,
               ...(maxResults !== undefined ? { maxResults } : {}),
               ...(minScore !== undefined ? { minScore } : {}),
+              ...(kind !== undefined ? { kind } : {}),
+              ...(signals !== undefined ? { signals } : {}),
               ...buildSearchContext(ctx),
             }) as MemorySearchResult[];
             const results = filterResultsByCorpus(rawResults, corpus);

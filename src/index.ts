@@ -1,11 +1,13 @@
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { registerMemoryCli } from "./cli.js";
 import { registerMemoryCliMetadata } from "./cli-descriptors.js";
-import { buildContextEngineFactory } from "./context-engine.js";
+import { buildContextEngineFactory, clearSessionTrigger, normalizeKernelMessage, setSessionTrigger } from "./context-engine.js";
 import { createBeforeResetHook, createSessionEndHook } from "./lifecycle-hooks.js";
 import { createDreamPromotionHandle } from "./dream-promotion.js";
 import { createMarkdownIngestionHandle } from "./markdown-ingest.js";
 import { buildMemoryPromptSection } from "./memory-provider.js";
+import { createMemoryDescribeTool, createMemoryExpandTool, createMemoryGrepTool } from "./tools/memory-recall.js";
+import type { ClientGetter } from "./plugin-runtime.js";
 import { buildMemoryRuntimeBridge } from "./memory-runtime.js";
 import { createLibraVdbMemoryTools } from "./memory-tools.js";
 import { createPluginRuntime } from "./plugin-runtime.js";
@@ -42,6 +44,7 @@ export function register(api: OpenClawPluginApi) {
   // Slot gating: reject conflicts and skip explicit opt-out BEFORE runtime
   // creation, so no work is wasted when memory is disabled or misconfigured.
   const memSlot = api.config?.plugins?.slots?.memory;
+  const ctxSlot = api.config?.plugins?.slots?.contextEngine;
   if (!isLightweight && !isDiscovery) {
     if (memSlot && memSlot !== MEMORY_ID && memSlot !== "none") {
       throw new Error(
@@ -56,6 +59,18 @@ export function register(api: OpenClawPluginApi) {
       );
       registerMemoryCli(api, null, cfg, logger);
       return;
+    }
+    if (ctxSlot && ctxSlot !== MEMORY_ID && ctxSlot !== "legacy") {
+      throw new Error(
+        `[libravdb-memory] plugins.slots.contextEngine is "${ctxSlot}". ` +
+          `Set it to "libravdb-memory" before enabling this plugin.`,
+      );
+    }
+    if (!ctxSlot || ctxSlot === "legacy") {
+      logger.warn?.(
+        "[libravdb-memory] plugins.slots.contextEngine is unset or \"legacy\"; " +
+        "set it to \"libravdb-memory\" for afterTurn ingestion to work.",
+      );
     }
   }
 
@@ -74,6 +89,24 @@ export function register(api: OpenClawPluginApi) {
     const memoryTools = createLibraVdbMemoryTools(runtimeOrNull.getClient, cfg, logger);
     api.registerTool?.((ctx) => memoryTools.createSearchTool(ctx), { names: ["memory_search"] });
     api.registerTool?.((ctx) => memoryTools.createGetTool(ctx), { names: ["memory_get"] });
+  }
+
+  // Recall tools: describe, expand, grep — available when the runtime exists.
+  if (runtimeOrNull) {
+    api.registerTool?.((ctx) => {
+      const getClient = runtimeOrNull.getClient;
+      const getSessionKey = () => (ctx as Record<string, unknown>).sessionKey as string | undefined;
+      return createMemoryDescribeTool(getClient, logger);
+    }, { names: ["memory_describe"] });
+    api.registerTool?.((ctx) => {
+      const getClient = runtimeOrNull.getClient;
+      const getSessionKey = () => (ctx as Record<string, unknown>).sessionKey as string | undefined;
+      return createMemoryExpandTool(getClient, getSessionKey, logger);
+    }, { names: ["memory_expand"] });
+    api.registerTool?.((ctx) => {
+      const getClient = runtimeOrNull.getClient;
+      return createMemoryGrepTool(getClient, logger);
+    }, { names: ["memory_grep"] });
   }
 
   if (isLightweight || isDiscovery) {
@@ -100,6 +133,9 @@ export function register(api: OpenClawPluginApi) {
 
   if (!memSlot) {
     logger.warn?.("[libravdb-memory] plugins.slots.memory is unset; set it to \"libravdb-memory\" for memory to work.");
+  }
+  if (!ctxSlot || ctxSlot === "legacy") {
+    logger.warn?.("[libravdb-memory] plugins.slots.contextEngine is unset or \"legacy\"; set it to \"libravdb-memory\" for afterTurn ingestion to work.");
   }
 
   // Migrated from three legacy calls to a single registerMemoryCapability.
@@ -134,6 +170,24 @@ export function register(api: OpenClawPluginApi) {
     MEMORY_ID,
     () => buildContextEngineFactory(runtime, cfg, api.logger ?? console),
   );
+
+  // Register the daemon's extractive summarization as a pluggable
+  // compaction backend. When agents.defaults.compaction.provider is
+  // set to "libravdb-memory", the framework's compaction safeguard
+  // delegates summarization here instead of burning LLM tokens.
+  type CompactionProviderApi = { registerCompactionProvider?: (p: { id: string; label: string; summarize(params: { messages: unknown[] }): Promise<string> }) => void };
+  (api as unknown as CompactionProviderApi).registerCompactionProvider?.({
+    id: MEMORY_ID,
+    label: "LibraVDB Extractive Summarization",
+    async summarize({ messages }) {
+      const client = await runtime.getClient();
+      const result = await client.summarizeMessages({
+        messages: messages.map((m) => normalizeKernelMessage(m as { role: string; content: unknown; id?: string })),
+        maxOutputTokens: 64,
+      });
+      return result.summaryText;
+    },
+  });
 
   const markdownIngestion = createMarkdownIngestionHandle(cfg, runtime.getClient, api.logger ?? console);
   const dreamPromotion = createDreamPromotionHandle(cfg, runtime.getClient, api.logger ?? console);
@@ -179,6 +233,20 @@ export function register(api: OpenClawPluginApi) {
         );
       }
     },
+  });
+
+  // Capture trigger type for BeforeTurnKernel gating. Automated triggers
+  // (heartbeat, cron, memory, overflow) skip semantic retrieval to save
+  // an embedding call and RPC round trip on non-interactive turns.
+  api.on("before_prompt_build", async (_event, ctx) => {
+    const sessionId = (ctx as Record<string, unknown> | undefined)?.sessionId as string | undefined;
+    const trigger = (ctx as Record<string, unknown> | undefined)?.trigger as string | undefined;
+    if (sessionId) setSessionTrigger(sessionId, trigger);
+  });
+
+  api.on("session_end", async (_event, ctx) => {
+    const sessionId = (ctx as Record<string, unknown> | undefined)?.sessionId as string | undefined;
+    if (sessionId) clearSessionTrigger(sessionId);
   });
 
   api.on("before_reset", createBeforeResetHook(runtime, api.logger ?? console));
