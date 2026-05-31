@@ -144,19 +144,23 @@ If your service runs elsewhere, set `sidecarPath`:
 
 ## Highlights
 
-- **Unified Cognitive Scoring** - moves beyond standard semantic search by mathematically blending cosine similarity with frequency, recency, authored salience, and cognitive authority composite weights (`ω(c)`).
-- **Topological Causal Graphs** - internally models temporal memory chains via directed acyclic graphs (`WhyIDs`), injecting causal proximity into retrieval scoring to anticipate temporally connected context.
-- **Zero-GC Slab Allocation** - manages model tensor and inference data via a custom contiguous slab allocator (`slabby`), completely bypassing Go garbage collection pauses during high-throughput memory assembly.
-- **Deontic & Salience Retrieval** - applies structural authority weightings and deontic logic rules to ensure critical behavioral constraints mathematically outrank conversational chatter.
-- **Matryoshka Representation Learning** - natively supports dynamically tiered embedding dimensions (e.g., slicing 768d vectors down to 64d) for ultra-fast cascading coarse search followed by precision reranking.
-- **Cognitive Routing Circuit Breakers** - strictly monitors remote endpoint health via stateful circuit breakers that trip and safely auto-disable complex ML routing during downstream outages, preserving foundational search uptime.
-- **Zero-ML Local Compaction** - evaluates contextual gating thresholds to execute purely localized session summarization and compaction cycles natively within the vector service.
-- **True multi-tenancy** - routes multiple OpenClaw agents to strictly isolated, per-agent vector databases within a single lightweight vector service process.
-- **Zero-copy caching** - shares a memory-mapped, cross-tenant embedding cache across all active agents to keep hardware utilization incredibly low.
-- **Three memory scopes** - keeps active session, durable user, and global memory separate.
-- **Local-first inference** - uses local embedding paths by default, with optional remote model configurations.
-- **Operational tooling** - provides a dedicated CLI (`libravdbd status`, `migrate`, `tenant evict`) for live observability and safe health management without interrupting active sessions.
-- **Explicit service lifecycle** - the npm/OpenClaw package stays connect-only; `libravdbd` is installed and supervised separately over a secure gRPC transport.
+### Why LibraVDB over other memory plugins
+
+- **Truly local.** All embedding, search, and compaction runs on your hardware through a dedicated vector service. No cloud API calls, no data leaving your machine, no subscription fees. Works offline.
+- **Handles long conversations.** Sessions with hundreds of turns are automatically compacted into searchable summaries. The agent can recall what was discussed in turn 5 even when you're on turn 200 — without blowing the context window.
+- **Never forgets a constraint.** Behavioral rules, preferences, and operating boundaries ("always use TLS", "prefers dark mode") are automatically detected and surfaced higher in recall than conversational noise. The agent can ask "what are my constraints?" and get a surgical answer.
+- **Automatic contradiction detection.** When you say "my email changed to jeff@anthropic.com", the old email is automatically marked as outdated — no manual cleanup, no stale facts confusing the agent.
+- **BM25 + vector hybrid search.** Lexical matching (exact identifiers, file paths, error codes) is fused with semantic similarity. A query for `docker-compose.yml` finds the file even if you described it as "the container config."
+- **Summary recall with expansion tools.** Compacted conversation history can be explored without flooding context. `memory_describe` peeks at what a summary covers; `memory_expand` drills into specifics; `memory_grep` searches by pattern. The agent decides how deep to go.
+- **Subagent-safe expansion.** When a summary is too large to expand directly, `memory_expand` enforces a token budget and delegates to a sub-agent — protecting the main agent's context window.
+- **Predictive memory.** The vector service pre-computes what the agent is likely to ask next after each turn, injecting relevant context before the model even sees the prompt.
+- **Three memory scopes.** Session memory (current conversation), user memory (everything you've ever told the agent), and global memory (shared across users) are kept separate. Searches can target specific scopes.
+- **Cognitive kind and signal filters.** Memories are classified as identity, fact, preference, constraint, decision, or episode. `memory_search(kind="constraint")` returns only operating boundaries — no conversational noise.
+- **True multi-tenancy.** Isolated per-agent vector databases within a single vector service process. Each agent sees only its own data.
+- **Memory-mapped embedding cache.** Frequently embedded text is cached in a file-backed mmap region that survives daemon restarts. Cold starts are faster, repeat queries are instant.
+- **Pluggable summarization backend.** The vector service's extractive summarization can replace LLM-based compaction — zero tokens burned on summarization.
+- **Local-first inference.** GGUF, ONNX, or remote embedding backends. Hardware-native acceleration on Apple Silicon and NVIDIA. No cloud required.
+- **Operational CLI.** `libravdbd status`, `health`, `search`, `tenant evict`, `migrate` — live observability and management without interrupting active sessions.
 
 ## Embedding Backend Providers
 
@@ -193,11 +197,11 @@ openclaw memory journal --limit 50
 openclaw memory dream-promote --user-id <userId> --dream-file ~/DREAMS.md
 ```
 
-### Vector Service CLI (libravdbd v1.5.0+)
+### Vector Service CLI (libravdbd v1.6.0+)
 
 ```bash
 # Service health and status
-libravdbd status                    # tenants, cache, DB sizes
+libravdbd status                    # tenants, cache, DB sizes, CPU load
 libravdbd health                    # OK/UNHEALTHY
 
 # Search tenant memory (same collections memory_search queries)
