@@ -162,6 +162,29 @@ If your service runs elsewhere, set `sidecarPath`:
 - **Local-first inference.** GGUF, ONNX, or remote embedding backends. Hardware-native acceleration on Apple Silicon and NVIDIA. No cloud required.
 - **Operational CLI.** `libravdbd status`, `health`, `search`, `tenant evict`, `migrate` — live observability and management without interrupting active sessions.
 
+### Technical Architecture
+
+- **Unified Cognitive Scoring** — mathematically blends cosine similarity with frequency, recency, authored salience, and cognitive authority composite weights (`ω(c)`).
+- **Section 7 Two-Pass Retrieval** — coarse cascade search (coarse top-K) followed by precision reranking (second-pass top-K) with hop expansion and temporal comparison profiling.
+- **BM25 + Vector RRF Fusion** — lexical BM25 scoring fused with vector similarity via Reciprocal Rank Fusion across all 11 recall paths.
+- **Content-Addressed Summaries** — deterministic SHA256-based summary IDs: same inputs produce identical IDs across crashes and retries.
+- **Structured Eviction Cues** — ~60-token deterministic metadata pointers on summary records (anchors, decisions, constraints, signal counts) — no LLM needed.
+- **Topological Causal Graphs** — temporal memory chains via directed acyclic graphs (`WhyIDs`), injecting causal proximity into retrieval scoring.
+- **Zero-GC Slab Allocation** — manages model tensor and inference data via a custom contiguous slab allocator (`slabby`), bypassing Go garbage collection pauses.
+- **Deontic & Salience Retrieval** — structural authority weightings and deontic logic rules ensure critical behavioral constraints mathematically outrank conversational chatter.
+- **Matryoshka Representation Learning** — dynamically tiered embedding dimensions (e.g., slicing 768d vectors down to 64d) for cascading coarse search followed by precision reranking.
+- **Cognitive Routing Circuit Breakers** — stateful circuit breakers on remote endpoints, auto-disabling complex ML routing during outages while preserving foundational search.
+- **Zero-ML Local Compaction** — purely localized session summarization and compaction cycles natively within the vector service. L1-L8 pipeline with deterministic state skeleton.
+- **Anchor-Based Contradiction Detection** — regex anchor extraction with Jaccard dedup and automatic `MarkSuperseded` — zero LLM overhead.
+- **Access Frequency in Omega** — `log2(accessCount+1)/10` term in the authority composite: frequently-retrieved memories surface higher without dominating relevance.
+- **True multi-tenancy** — strictly isolated, per-agent vector databases within a single lightweight vector service process.
+- **Zero-copy caching** — memory-mapped cross-tenant embedding cache across all active agents. Tenant-scoped keys prevent cross-tenant collision.
+- **Three memory scopes** — active session, durable user, and global memory kept separate.
+- **Local-first inference** — GGUF, ONNX, or remote embedding backends. Hardware-native acceleration on Apple Silicon and NVIDIA.
+- **Pluggable compaction backend** — exposes the vector service's extractive summarization as an OpenClaw `CompactionProvider` — replaces LLM summarization.
+- **Operational tooling** — dedicated CLI (`libravdbd status`, `health`, `search`, `migrate`, `tenant evict`) for live observability.
+- **Explicit service lifecycle** — the npm/OpenClaw package stays connect-only; `libravdbd` is installed and supervised separately over a secure gRPC transport.
+
 ## Embedding Backend Providers
 
 The plugin supports multiple embedding backends. Set via `embeddingBackend` in plugin config:
