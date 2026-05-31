@@ -26,7 +26,7 @@ type MemoryExpandDetails = {
   text: string;
   truncated: boolean;
   exceededBudget: boolean;
-  childCount: number;
+  parentCount: number;
   error?: string;
 };
 
@@ -66,6 +66,10 @@ const MEMORY_DESCRIBE_SCHEMA = {
     summaryId: {
       type: "string",
       description: "A summary ID (sum_xxx format) returned by memory_search. Inspect metadata without expanding.",
+    },
+    sessionId: {
+      type: "string",
+      description: "Session ID the summary belongs to. If omitted, uses the current session.",
     },
   },
   required: ["summaryId"],
@@ -156,11 +160,12 @@ function readStr(params: Record<string, unknown>, key: string): string | undefin
   return t.length > 0 ? t : undefined;
 }
 
-function readNum(params: Record<string, unknown>, key: string, opts?: { integer?: boolean }): number | undefined {
+function readNum(params: Record<string, unknown>, key: string, opts?: { integer?: boolean; min?: number }): number | undefined {
   const v = params[key];
   const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : undefined;
   if (n === undefined || !Number.isFinite(n)) return undefined;
-  return opts?.integer ? Math.max(1, Math.floor(n)) : n;
+  const min = opts?.min ?? 1;
+  return opts?.integer ? Math.max(min, Math.floor(n)) : n;
 }
 
 function formatEvictionCueLine(cue: string | undefined, summaryId: string): string {
@@ -263,7 +268,7 @@ export function createMemoryExpandTool(
       const summaryIds: string[] = Array.isArray(rawIds) ? rawIds.filter((v): v is string => typeof v === "string" && v.trim().length > 0) : [];
       if (summaryIds.length === 0) throw new Error("memory_expand requires at least one summaryId");
 
-      const maxDepth = readNum(params, "maxDepth", { integer: true }) ?? 1;
+      const maxDepth = readNum(params, "maxDepth", { integer: true, min: 0 }) ?? 1;
       const maxTokens = readNum(params, "maxTokens", { integer: true }) ?? MAX_EXPAND_TOKENS;
       const sessionId = readStr(params, "sessionId") ?? "";
 
@@ -274,7 +279,7 @@ export function createMemoryExpandTool(
         if (remaining === 0) {
           return {
             content: [{ type: "text", text: "[Subagent expansion budget exhausted. Narrow the query or request fewer summaries.]" }],
-            details: { summaryId: summaryIds[0] ?? "", depth: maxDepth, text: "", truncated: true, exceededBudget: true, childCount: 0 },
+            details: { summaryId: summaryIds[0] ?? "", depth: maxDepth, text: "", truncated: true, exceededBudget: true, parentCount: 0 },
           };
         }
         if (remaining > 0 && remaining < maxTokens) {
@@ -288,7 +293,7 @@ export function createMemoryExpandTool(
         const parts: string[] = [];
         let totalChars = 0;
         let truncated = false;
-        let childCount = 0;
+        let parentCount = 0;
 
         for (const sid of summaryIds) {
           if (totalChars >= MAX_EXPAND_CHARS) {
@@ -312,7 +317,7 @@ export function createMemoryExpandTool(
             }
             const lineage = (meta.continuity_lineage ?? {}) as Record<string, unknown>;
             const parents = Array.isArray(lineage.parent_summary_ids) ? (lineage.parent_summary_ids as string[]).length : 0;
-            childCount += parents;
+            parentCount += parents;
 
             const remaining = MAX_EXPAND_CHARS - totalChars;
             const text = resp.text.length > remaining ? resp.text.slice(0, remaining) + "\n...[truncated]" : resp.text;
@@ -334,7 +339,7 @@ export function createMemoryExpandTool(
               type: "text",
               text: `[Expansion exceeds ${maxTokens}-token budget. Use memory_describe to navigate child summaries, or narrow with specific summaryIds.]`,
             }],
-            details: { summaryId: summaryIds[0] ?? "", depth: maxDepth, text: "", truncated: true, exceededBudget: true, childCount },
+            details: { summaryId: summaryIds[0] ?? "", depth: maxDepth, text: "", truncated: true, exceededBudget: true, parentCount },
           };
         }
 
@@ -344,7 +349,7 @@ export function createMemoryExpandTool(
           text,
           truncated,
           exceededBudget,
-          childCount,
+          parentCount,
         });
       } catch (error) {
         logger.warn?.(`memory_expand failed: ${formatError(error)}`);
@@ -354,7 +359,7 @@ export function createMemoryExpandTool(
           text: "",
           truncated: false,
           exceededBudget: false,
-          childCount: 0,
+          parentCount: 0,
           error: formatError(error),
         });
       }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync } from "node:fs";
+
 import type { PluginRuntime } from "./plugin-runtime.js";
 import type {
   LoggerLike,
@@ -1486,7 +1486,7 @@ export function buildContextEngineFactory(
   function formatRetrievedMemory(predictions: BeforeTurnKernelResponse["predictions"]): string {
     if (!predictions?.length) return "";
     const items = predictions.map((p) =>
-      `<memory_item source="semantic" reason="${escapeXml(p.reason)}">${escapeXml(p.text)}</memory_item>`
+      `<memory_item source="semantic" reason="${escapeXml(p.reason ?? "exact_recall")}">${escapeXml(p.text ?? "")}</memory_item>`
     ).join("\n");
     return [
       "<retrieved_memory>",
@@ -1945,7 +1945,10 @@ export function buildContextEngineFactory(
           beforeTurnQueryHint = null;
         }
         if (beforeTurnQueryHint) {
-          const cached = turnCache.get(sessionId, beforeTurnQueryHint) as BeforeTurnKernelResponse | undefined;
+          // Include message count in cache key so identical queries
+          // in different turns don't return stale predictions.
+          const turnScopedHint = `${messages.length}:${beforeTurnQueryHint}`;
+          const cached = turnCache.get(sessionId, turnScopedHint) as BeforeTurnKernelResponse | undefined;
           if (cached?.predictions) {
             beforeTurnPredictions = cached.predictions;
             beforeTurnQueryHint = null;
@@ -1974,12 +1977,13 @@ export function buildContextEngineFactory(
                 setTimeout(() => reject(new Error(`BeforeTurnKernel timed out after ${beforeTurnTimeout}ms`)), beforeTurnTimeout)
               ),
             ]);
-            turnCache.set(sessionId, beforeTurnQueryHint, btResult);
-            clearBeforeTurnCircuit(sessionId);
             const maxMemories = cfg.beforeTurnMaxMemories ?? 5;
-            beforeTurnPredictions = btResult.predictions && btResult.predictions.length > maxMemories
+            const clamped = btResult.predictions && btResult.predictions.length > maxMemories
               ? selectTopByRelevance(btResult.predictions, strippedPrompt, maxMemories)
               : btResult.predictions;
+            turnCache.set(sessionId, `${messages.length}:${beforeTurnQueryHint}`, { predictions: clamped });
+            beforeTurnPredictions = clamped;
+            clearBeforeTurnCircuit(sessionId);
           } catch (err) {
             trackBeforeTurnFailure(sessionId, err);
             logger.warn?.(
@@ -2138,7 +2142,6 @@ export function buildContextEngineFactory(
       tokenBudget?: number;
       runtimeContext?: Record<string, unknown>;
     }) {
-      try { appendFileSync("/tmp/libravdb-afterturn.trace", `${new Date().toISOString()} afterTurn CALLED sessionId=${args.sessionId} messages=${args.messages?.length}\n`); } catch (_) {}
       const sessionId = requireSessionId(args.sessionId, "afterTurn");
       const userId = resolveUserId({
         userIdOverride: args.userId,
@@ -2173,15 +2176,12 @@ export function buildContextEngineFactory(
       );
 
       try {
-        try { appendFileSync("/tmp/libravdb-afterturn.trace", `${new Date().toISOString()} afterTurn ENTER try sessionId=${sessionId}\n`); } catch (_) {}
         const client = await runtime.getClient();
-        try { appendFileSync("/tmp/libravdb-afterturn.trace", `${new Date().toISOString()} afterTurn GOT CLIENT sessionId=${sessionId}\n`); } catch (_) {}
         const currentTokenCount = normalizeCurrentTokenCount(
           typeof args.runtimeContext?.currentTokenCount === "number"
             ? args.runtimeContext.currentTokenCount
             : undefined,
         );
-        try { appendFileSync("/tmp/libravdb-afterturn.trace", `${new Date().toISOString()} afterTurn CALLING RPC sessionId=${sessionId} ingestMessages=${ingestMessages.length}\n`); } catch (_) {}
         const result = await client.afterTurnKernel({
           sessionId,
           sessionKey: args.sessionKey,
@@ -2191,7 +2191,6 @@ export function buildContextEngineFactory(
           isHeartbeat: args.isHeartbeat,
           cursor,
         } as unknown as Parameters<typeof client.afterTurnKernel>[0]);
-        try { appendFileSync("/tmp/libravdb-afterturn.trace", `${new Date().toISOString()} afterTurn RPC OK sessionId=${sessionId} ok=${result?.ok} predictions=${result?.predictions?.length ?? 0} cursor=${result?.cursor ? "present" : "none"}\n`); } catch (_) {}
 
         // Reconcile manifest with daemon-confirmed cursor.
         // The daemon returns a cursor even when it ingests zero messages
@@ -2261,7 +2260,6 @@ export function buildContextEngineFactory(
         prewarmEmbeddingCache(messages, userId, client);
         return result;
       } catch (error) {
-        try { appendFileSync("/tmp/libravdb-afterturn.trace", `${new Date().toISOString()} afterTurn ERROR sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}\n`); } catch (_) {}
         logger.warn?.(
           `LibraVDB afterTurn failed sessionId=${sessionId}: ` +
           `${error instanceof Error ? error.message : String(error)}`,

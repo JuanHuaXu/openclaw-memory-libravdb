@@ -80,8 +80,11 @@ test("TurnMemoryCache evicts LRU", () => {
   const cache = new TurnMemoryCache(2);
   cache.set("s1", "q1", 1);
   cache.set("s1", "q2", 2);
-  cache.set("s1", "q3", 3); // evicts q1
-  assert.equal(cache.get("s1", "q1"), undefined);
+  // Touch q1 to promote it — q2 becomes LRU tail.
+  assert.equal(cache.get("s1", "q1"), 1);
+  cache.set("s1", "q3", 3); // evicts q2 (LRU), not q1
+  assert.equal(cache.get("s1", "q2"), undefined);
+  assert.equal(cache.get("s1", "q1"), 1);
   assert.equal(cache.get("s1", "q3"), 3);
 });
 
