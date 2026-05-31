@@ -21,6 +21,8 @@ type MemorySearchParams = {
   agentId?: string;
   sessionId?: string;
   sessionKey?: string;
+  kind?: string;
+  signals?: string[];
   context?: {
     userId?: string;
     agentId?: string;
@@ -120,7 +122,7 @@ function createMemorySearchManager(
             text: queryText,
             k,
           })
-        : await searchResolvedCollections(client, cfg, userId, sessionId, queryText, k, searchCorpus);
+        : await searchResolvedCollections(client, cfg, userId, sessionId, queryText, k, searchCorpus, params.kind, params.signals);
       const filteredResults =
         minScore === undefined
           ? result.results
@@ -197,22 +199,30 @@ async function searchResolvedCollections(
   queryText: string,
   k: number,
   corpus: "all" | "memory" | "sessions",
+  kind?: string,
+  signals?: string[],
 ): Promise<{ results: ProtoSearchResult[] }> {
   const collections = resolveSearchCollections(cfg, userId, sessionId, corpus);
   if (collections.length === 0) {
     return { results: [] };
   }
+  const kindFilter = kind || undefined;
+  const signalFilter = (signals && signals.length > 0) ? signals : undefined;
   return collections.length === 1
     ? await client.searchText({
         collection: collections[0],
         text: queryText,
         k,
+        kind: kindFilter,
+        signals: signalFilter,
       })
     : await client.searchTextCollections({
         collections,
         text: queryText,
         k,
         excludeByCollection: {},
+        kind: kindFilter,
+        signals: signalFilter,
       });
 }
 

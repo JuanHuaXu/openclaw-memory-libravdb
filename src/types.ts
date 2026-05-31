@@ -88,6 +88,10 @@ export interface PluginConfig {
   compactThreshold?: number;
   compactionThresholdFraction?: number;
   compactSessionTokenBudget?: number;
+  /** Token budget cap for subagent memory_expand calls. Default 8000.
+   *  Prevents a subagent from blowing its context window via repeated
+   *  expansions. Set to 0 to disable the cap entirely. */
+  subagentTokenBudget?: number;
   section7CoarseTopK?: number;
   section7SecondPassTopK?: number;
   section7Theta1?: number;
@@ -100,6 +104,7 @@ export interface PluginConfig {
   section7AuthorityAuthoredWeight?: number;
   section7AuthoritySalienceWeight?: number;
   section7RecencyAccessLambda?: number;
+  section7AuthorityAccessWeight?: number;
   recoveryFloorScore?: number;
   recoveryMinTopK?: number;
   recoveryMinConfidenceMean?: number;
@@ -125,6 +130,14 @@ export interface PluginConfig {
    * "tls"            — always use TLS regardless of address.
    * "insecure"       — always use plaintext (service mesh, tunnel). */
   grpcEndpointTlsMode?: "auto" | "tls" | "insecure";
+  /** Whether BeforeTurnKernel retrieval is enabled. Default: true */
+  beforeTurnEnabled?: boolean;
+  /** Timeout in milliseconds for the BeforeTurnKernel gRPC call. Default: 5000 */
+  beforeTurnTimeoutMs?: number;
+  /** Maximum number of retrieved memories to inject per turn. Default: 5 */
+  beforeTurnMaxMemories?: number;
+  /** Minimum similarity score (0.0–1.0) for semantic search hits. Default: 0.4 */
+  beforeTurnMinScore?: number;
 }
 
 export interface SearchResult {

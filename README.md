@@ -72,6 +72,22 @@ openclaw plugins install @xdarkicex/openclaw-memory-libravdb
 
 This automatically configures `plugins.slots.memory` and `plugins.slots.contextEngine` to point to `libravdb-memory`, and sets up the plugin entry with defaults.
 
+To use the daemon's extractive summarization as a pluggable compaction backend (replaces LLM summarization with zero-token extractive compaction):
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "compaction": {
+        "provider": "libravdb-memory"
+      }
+    }
+  }
+}
+```
+
+This works alongside the context engine's own compaction path — the provider is used when the framework's compaction safeguard runs without a context engine owning compaction.
+
 Then restart the gateway so the plugin loads:
 
 ```bash
