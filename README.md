@@ -480,3 +480,4 @@ service checkout. For the full source workflow, read [Development](./docs/develo
 - default data path: `$HOME/.libravdbd/data_nomic-embed-text-v1_5.libravdb`
 - default macOS/Linux endpoint: `unix:$HOME/.libravdbd/run/libravdb.sock`
 - default Windows endpoint: `tcp:127.0.0.1:37421`
+
