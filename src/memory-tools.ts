@@ -135,6 +135,34 @@ export function createLibraVdbMemoryTools(
   const bridge = buildMemoryRuntimeBridge(getClient, cfg);
   const managers = new Map<string, Promise<MemorySearchManager>>();
 
+  // Turn-scoped search dedup: blocks repeated searches within the same turn.
+  // The model sometimes loops memory_search with slight query variations;
+  // this enforces "once per turn" at the tool level, not just the prompt.
+  const turnSearchKeys = new Map<string, Set<string>>();
+  const TURN_SEARCH_MAX_KEYS = 500;
+
+  function dedupKey(sessionKey: string, query: string): string {
+    return `${sessionKey}:${query.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 80)}`;
+  }
+
+  function isDuplicateSearch(sessionKey: string, query: string): boolean {
+    if (!sessionKey) return false;
+    const key = dedupKey(sessionKey, query);
+    const keys = turnSearchKeys.get(sessionKey);
+    if (!keys) {
+      turnSearchKeys.set(sessionKey, new Set([key]));
+      // Prune stale entries.
+      if (turnSearchKeys.size > TURN_SEARCH_MAX_KEYS) {
+        const oldest = turnSearchKeys.keys().next().value;
+        if (oldest !== undefined) turnSearchKeys.delete(oldest);
+      }
+      return false;
+    }
+    if (keys.has(key)) return true;
+    keys.add(key);
+    return false;
+  }
+
   async function getManager(ctx: MemoryToolContext, purpose: string): Promise<MemorySearchManager> {
     const key = managerCacheKey(ctx);
     let manager = managers.get(key);
@@ -165,6 +193,13 @@ export function createLibraVdbMemoryTools(
         execute: async (_toolCallId, rawParams) => {
           const params = asToolParamsRecord(rawParams);
           const query = readRequiredStringParam(params, "query");
+          const sessionKey = ctx.sessionKey ?? "";
+          if (isDuplicateSearch(sessionKey, query)) {
+            return jsonToolResult<MemorySearchToolDetails>({
+              results: [],
+              error: `Duplicate search blocked. You already searched this turn — use the previous results. Do not call memory_search again.`,
+            });
+          }
           const corpus = readMemoryCorpus(params.corpus);
           const kind = typeof params.kind === "string" ? params.kind : undefined;
           const signals = Array.isArray(params.signals) ? (params.signals as string[]).filter((s): s is string => typeof s === "string") : undefined;
