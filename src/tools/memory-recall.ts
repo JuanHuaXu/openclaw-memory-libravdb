@@ -256,6 +256,7 @@ export function createMemoryExpandTool(
   getClient: ClientGetter,
   getSessionKey: () => string | undefined,
   logger: LoggerLike = console,
+  getSessionId: () => string | undefined = () => undefined,
 ) {
   return {
     name: "memory_expand",
@@ -274,7 +275,7 @@ export function createMemoryExpandTool(
 
       const maxDepth = readNum(params, "maxDepth", { integer: true, min: 0 }) ?? 1;
       let maxTokens = readNum(params, "maxTokens", { integer: true }) ?? MAX_EXPAND_TOKENS;
-      const sessionId = readStr(params, "sessionId") ?? "";
+      const sessionId = readStr(params, "sessionId") ?? getSessionId() ?? "";
 
       // Subagent budget gate: if this is a subagent, check remaining expansion budget.
       const sessionKey = getSessionKey();

@@ -86,6 +86,45 @@ test("memory_grep defaults to the active session id", async () => {
   assert.equal(client.calls[0]?.params.collection, "session_summary:active-session");
 });
 
+test("memory_expand defaults to the active session id", async () => {
+  const client = new FakeRecallClient();
+  const tool = createMemoryExpandTool(
+    async () => client as unknown as LibravDBClient,
+    () => undefined,
+    silentLogger,
+    () => "active-session",
+  );
+
+  const result = await tool.execute("call-1", { summaryIds: ["sum-1"] });
+
+  assert.equal((result.details as { summaryId: string }).summaryId, "sum-1");
+  assert.deepEqual(client.calls[0], {
+    method: "expandSummary",
+    params: { sessionId: "active-session", summaryId: "sum-1", maxDepth: 1 },
+  });
+});
+
+test("memory_expand explicit session id takes precedence over active session id", async () => {
+  const client = new FakeRecallClient();
+  const tool = createMemoryExpandTool(
+    async () => client as unknown as LibravDBClient,
+    () => undefined,
+    silentLogger,
+    () => "active-session",
+  );
+
+  const result = await tool.execute("call-1", {
+    summaryIds: ["sum-1"],
+    sessionId: "explicit-session",
+  });
+
+  assert.equal((result.details as { summaryId: string }).summaryId, "sum-1");
+  assert.deepEqual(client.calls[0], {
+    method: "expandSummary",
+    params: { sessionId: "explicit-session", summaryId: "sum-1", maxDepth: 1 },
+  });
+});
+
 test("memory_expand uses remaining subagent budget instead of dropping the first oversized request", async () => {
   const client = new FakeRecallClient();
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "u1", subagentTokenBudget: 1000 }, silentLogger);

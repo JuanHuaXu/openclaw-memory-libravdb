@@ -101,7 +101,8 @@ export function register(api: OpenClawPluginApi) {
     api.registerTool?.((ctx) => {
       const getClient = runtimeOrNull.getClient;
       const getSessionKey = () => (ctx as Record<string, unknown>).sessionKey as string | undefined;
-      return createMemoryExpandTool(getClient, getSessionKey, logger);
+      const getSessionId = () => (ctx as Record<string, unknown>).sessionId as string | undefined;
+      return createMemoryExpandTool(getClient, getSessionKey, logger, getSessionId);
     }, { names: ["memory_expand"] });
     api.registerTool?.((ctx) => {
       const getClient = runtimeOrNull.getClient;
