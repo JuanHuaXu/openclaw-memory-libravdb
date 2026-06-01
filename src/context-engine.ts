@@ -102,10 +102,32 @@ function requireSessionId(sessionId: string | undefined, operation: string): str
  */
 function normalizeCompactResult(
   response: Partial<CompactSessionResponse> | undefined,
-  options: { tokensBefore?: number; threshold?: number } = {},
+  options: { tokensBefore?: number; threshold?: number; logger?: LoggerLike } = {},
 ): OpenClawCompatibleCompactResult {
   const didCompact = response?.didCompact === true;
   const tokensBefore = normalizeCurrentTokenCount(options.tokensBefore) ?? 0;
+  const lastCompactedTurn =
+    typeof response?.lastCompactedTurn === "bigint" ? response.lastCompactedTurn : undefined;
+  const tokenAccumulatorAfter =
+    typeof response?.tokenAccumulatorAfter === "number" ? response.tokenAccumulatorAfter : undefined;
+  const totalTurns = typeof response?.totalTurns === "bigint" ? response.totalTurns : undefined;
+  const skippedNoNewTurns =
+    typeof response?.skippedNoNewTurns === "boolean" ? response.skippedNoNewTurns : undefined;
+
+  if (
+    lastCompactedTurn != null ||
+    tokenAccumulatorAfter != null ||
+    totalTurns != null ||
+    skippedNoNewTurns != null
+  ) {
+    options.logger?.info?.(
+      `[compact:trace] daemon state lastCompactedTurn=${lastCompactedTurn?.toString() ?? "unknown"} ` +
+        `tokenAccumulatorAfter=${tokenAccumulatorAfter ?? "unknown"} ` +
+        `totalTurns=${totalTurns?.toString() ?? "unknown"} ` +
+        `skippedNoNewTurns=${skippedNoNewTurns ?? "unknown"}`,
+    );
+  }
+
   const details = {
     clustersFormed:
       typeof response?.clustersFormed === "number" ? response.clustersFormed : undefined,
@@ -122,6 +144,10 @@ function normalizeCompactResult(
       typeof response?.summaryText === "string" && response.summaryText.length > 0
         ? response.summaryText
         : undefined,
+    ...(lastCompactedTurn != null ? { lastCompactedTurn: lastCompactedTurn.toString() } : {}),
+    ...(tokenAccumulatorAfter != null ? { tokenAccumulatorAfter } : {}),
+    ...(totalTurns != null ? { totalTurns: totalTurns.toString() } : {}),
+    ...(skippedNoNewTurns != null ? { skippedNoNewTurns } : {}),
   };
 
   // When the engine owns compaction but refuses to compact while the session
@@ -493,13 +519,17 @@ function resolveDynamicCompactThreshold(
   compactThreshold: number | undefined,
   compactionThresholdFraction: number | undefined,
   compactSessionTokenBudget?: number,
+  logger?: LoggerLike,
 ): number | undefined {
   // Explicit compactThreshold always wins.
   if (typeof compactThreshold === "number" && Number.isFinite(compactThreshold) && compactThreshold > 0) {
-    return Math.max(1, Math.floor(compactThreshold));
+    const val = Math.max(1, Math.floor(compactThreshold));
+    logger?.info?.(`[compact:trace] resolveDynamicCompactThreshold branch=explicit tokenBudget=${tokenBudget} compactThreshold=${compactThreshold} → ${val}`);
+    return val;
   }
   const normalizedBudget = normalizeTokenBudget(tokenBudget);
   if (normalizedBudget == null) {
+    logger?.info?.(`[compact:trace] resolveDynamicCompactThreshold branch=null_budget tokenBudget=${tokenBudget} → undefined`);
     return undefined;
   }
   const fraction = normalizeThresholdFraction(compactionThresholdFraction);
@@ -510,8 +540,11 @@ function resolveDynamicCompactThreshold(
   const withBounds = Math.max(2000, Math.min(16000, derived));
   // User-configured compactSessionTokenBudget overrides the ceiling.
   if (typeof compactSessionTokenBudget === "number" && compactSessionTokenBudget > 0) {
-    return Math.min(withBounds, compactSessionTokenBudget);
+    const capped = Math.min(withBounds, compactSessionTokenBudget);
+    logger?.info?.(`[compact:trace] resolveDynamicCompactThreshold branch=user_cap tokenBudget=${tokenBudget} normalizedBudget=${normalizedBudget} fraction=${fraction} derived=${derived} withBounds=${withBounds} cap=${compactSessionTokenBudget} → ${capped}`);
+    return capped;
   }
+  logger?.info?.(`[compact:trace] resolveDynamicCompactThreshold branch=clamped tokenBudget=${tokenBudget} normalizedBudget=${normalizedBudget} fraction=${fraction} derived=${derived} withBounds=${withBounds} → ${withBounds}`);
   return withBounds;
 }
 
@@ -1760,6 +1793,7 @@ export function buildContextEngineFactory(
       const threshold = getDynamicCompactThreshold(args.tokenBudget);
       return normalizeCompactResult(await client.compactSession(request), {
         tokensBefore: args.currentTokenCount,
+        logger,
         ...(threshold != null ? { threshold } : {}),
       });
     } catch (error) {
