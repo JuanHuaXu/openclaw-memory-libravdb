@@ -492,7 +492,9 @@ function resolveDynamicCompactThreshold(
   tokenBudget: number | undefined,
   compactThreshold: number | undefined,
   compactionThresholdFraction: number | undefined,
+  compactSessionTokenBudget?: number,
 ): number | undefined {
+  // Explicit compactThreshold always wins.
   if (typeof compactThreshold === "number" && Number.isFinite(compactThreshold) && compactThreshold > 0) {
     return Math.max(1, Math.floor(compactThreshold));
   }
@@ -501,7 +503,16 @@ function resolveDynamicCompactThreshold(
     return undefined;
   }
   const fraction = normalizeThresholdFraction(compactionThresholdFraction);
-  return Math.max(1, Math.floor(normalizedBudget * fraction));
+  const derived = Math.max(1, Math.floor(normalizedBudget * fraction));
+  // Clamp to a safe range so the threshold is never absurdly low (not
+  // enough turns to compact) or absurdly high (Codex Runtime 1M tokens
+  // would produce an unreachable 800k threshold).
+  const withBounds = Math.max(2000, Math.min(16000, derived));
+  // User-configured compactSessionTokenBudget overrides the ceiling.
+  if (typeof compactSessionTokenBudget === "number" && compactSessionTokenBudget > 0) {
+    return Math.min(withBounds, compactSessionTokenBudget);
+  }
+  return withBounds;
 }
 
 function resolvePredictiveCompactionTarget(params: {
@@ -1556,6 +1567,7 @@ export function buildContextEngineFactory(
       tokenBudget,
       cfg.compactThreshold,
       cfg.compactionThresholdFraction,
+      cfg.compactSessionTokenBudget,
     );
 
   const buildAssemblyConfig = (tokenBudget: number | undefined) => ({
