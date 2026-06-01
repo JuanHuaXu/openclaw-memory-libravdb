@@ -432,6 +432,35 @@ test("context engine afterTurn resolves config userId and passes messages to dae
   assert.equal(msgs.length, 2);
 });
 
+test("context engine afterTurn is idempotent when manifest has already ACKed every forwarded message", async () => {
+  const client = new FakeClient();
+  const cfg: PluginConfig = { userId: "fixed-user" };
+  const engine = buildContextEngineFactory(fakeRuntime(client), cfg);
+  const sessionId = `s1-after-turn-idempotent-${process.pid}`;
+  const messages = [
+    makeMessage("user", "stale edit request"),
+    makeMessage("assistant", "edit failed because old text did not match"),
+  ];
+
+  await engine.afterTurn({
+    sessionId,
+    sessionKey: "sk1",
+    messages,
+  });
+  const firstCallCount = client.calls.filter((c) => c.method === "afterTurnKernel").length;
+
+  const result = await engine.afterTurn({
+    sessionId,
+    sessionKey: "sk1",
+    messages,
+  });
+
+  const secondCallCount = client.calls.filter((c) => c.method === "afterTurnKernel").length;
+  assert.equal(firstCallCount, 1);
+  assert.equal(secondCallCount, 1, "duplicate afterTurn should not call daemon again");
+  assert.deepEqual(result, { ok: true, skipped: true, reason: "no-new-messages" });
+});
+
 test("context engine afterTurn strips OpenClaw untrusted metadata envelope before ingest", async () => {
   const client = new FakeClient();
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
@@ -1405,15 +1434,16 @@ test("context engine skips predictive context when it cannot fit within the toke
     ],
   };
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+  const sessionId = `s1-predictive-escape-${process.pid}`;
 
   await engine.afterTurn({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "remember this")],
   });
 
   const assembled = await engine.assemble({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",
@@ -2123,15 +2153,16 @@ test("context engine escapes predictive context text before injecting it into th
     ],
   };
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+  const sessionId = `s1-predictive-budget-${process.pid}`;
 
   await engine.afterTurn({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "remember this")],
   });
 
   const assembled = await engine.assemble({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",
@@ -2254,15 +2285,16 @@ test("predictive context injects items item-by-item, dropping tail items when bu
     ],
   };
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+  const sessionId = `s1-predictive-truncate-${process.pid}`;
 
   await engine.afterTurn({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "remember this")],
   });
 
   const assembled = await engine.assemble({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",
@@ -2292,15 +2324,16 @@ test("predictive context inner-truncates an oversized prediction with [truncated
     ],
   };
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+  const sessionId = `s1-predictive-oversized-${process.pid}`;
 
   await engine.afterTurn({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "remember this")],
   });
 
   const assembled = await engine.assemble({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",

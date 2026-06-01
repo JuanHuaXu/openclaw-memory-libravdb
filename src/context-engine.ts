@@ -158,9 +158,10 @@ function normalizeCompactResult(
   const overBudget = threshold != null && tokensBefore >= threshold;
   const engineRefused = !didCompact && overBudget;
 
+  const compactMetrics = response as (Partial<CompactSessionResponse> & { tokensAfter?: unknown }) | undefined;
   const tokensAfter =
-    didCompact && typeof response?.tokensAfter === "number" && response.tokensAfter > 0
-      ? response.tokensAfter
+    didCompact && typeof compactMetrics?.tokensAfter === "number" && compactMetrics.tokensAfter > 0
+      ? compactMetrics.tokensAfter
       : undefined;
 
   return {
@@ -2563,6 +2564,14 @@ export function buildContextEngineFactory(
         `prePromptMessageCount=${args.prePromptMessageCount ?? "unknown"} ` +
         `heartbeat=${args.isHeartbeat ?? false}`,
       );
+
+      if (newMessages.length === 0) {
+        logger.info?.(
+          `LibraVDB afterTurn skipped sessionId=${sessionId} reason=no-new-messages ` +
+          `messageCount=${messages.length} overlapIndex=${overlapIndex}`,
+        );
+        return { ok: true, skipped: true, reason: "no-new-messages" };
+      }
 
       try {
         const client = await runtime.getClient();
