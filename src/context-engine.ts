@@ -2118,10 +2118,14 @@ export function buildContextEngineFactory(
     systemPromptAddition: string;
   }): Promise<string | null> {
     try {
+      // Use a natural-language query that semantically matches the
+      // pointer record text ("Previous session continuity — ...").
+      // Fetch enough results so the exact ID match isn't crowded out
+      // by stronger semantic hits in the user collection.
       const continuityHits = await params.client.searchTextCollections({
         collections: [resolveUserCollection(params.userId)],
-        text: "__session_continuity__",
-        k: 1,
+        text: "previous session context continuity",
+        k: 8,
         excludeByCollection: {},
       });
       const continuityHit = continuityHits.results?.find(
