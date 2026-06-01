@@ -52,7 +52,7 @@ const DEFAULT_COMPACTION_THRESHOLD_FRACTION = 0.8;
 const STRUCTURED_MARKER_RE = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){2,}_\d{6,}\b/g;
 const DISTINCTIVE_IDENTIFIER_RE = /\b([A-Za-z][A-Za-z0-9]*(?:[_-][A-Za-z0-9]+){1,})\b/g;
 const QUOTED_PHRASE_RE = /"([^"]{4,})"|'([^']{4,})'/g;
-const EXACT_RECALL_SEARCH_K = 32;
+const EXACT_RECALL_SEARCH_K = 10;
 const EXACT_RECALL_MAX_TOKENS = 4;
 const RESERVED_CURRENT_TURN_TOKENS = 150;
 const AFTER_TURN_INGEST_MAX_TOKENS = 2048;
@@ -2144,7 +2144,9 @@ export function buildContextEngineFactory(
       const continuityHit = continuityHits.results?.find(
         (r) => r.id === "__session_continuity__"
       );
-      if (!continuityHit) return null;
+      if (!continuityHit) {
+        return '<continuity_context>\nNo prior session context available. Use memory_search to recall previous conversations.\n</continuity_context>';
+      }
 
       let meta: Record<string, unknown> = {};
       if (continuityHit.metadataJson && (continuityHit.metadataJson as Uint8Array).length > 0) {
@@ -2153,14 +2155,17 @@ export function buildContextEngineFactory(
         } catch { /* metadata parse failed, use empty */ }
       }
       const summaryId = meta.summary_id as string | undefined;
-      if (!summaryId) return null;
+      if (!summaryId) {
+        const sid = (meta.session_id as string | undefined) ?? params.sessionId;
+        return '<continuity_context>\nThe previous session (' + sid + ') was not compacted. Use memory_search with queries about what was discussed to recall context.\n</continuity_context>';
+      }
 
       const expanded = await params.client.expandSummary({
         sessionId: (meta.session_id as string) ?? params.sessionId,
         summaryId,
         maxDepth: 2,
       });
-      if (!expanded.text) return null;
+      if (!expanded.text) return '<continuity_context>\nFailed to expand prior session summary. Use memory_search to recall previous conversations.\n</continuity_context>';
 
       return '<continuity_context>\nThe following is a summary of the previous session. Use it for context about what was discussed before the reset.\n' + expanded.text + '\n</continuity_context>';
     } catch {
