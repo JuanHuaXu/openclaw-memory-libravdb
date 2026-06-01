@@ -2109,6 +2109,48 @@ export function buildContextEngineFactory(
     };
   }
 
+  async function injectContinuityContext(params: {
+    client: Awaited<ReturnType<typeof runtime.getClient>>;
+    userId: string;
+    sessionId: string;
+    logger: LoggerLike;
+    tokenBudget?: number;
+    systemPromptAddition: string;
+  }): Promise<string | null> {
+    try {
+      const continuityHits = await params.client.searchTextCollections({
+        collections: [resolveUserCollection(params.userId)],
+        text: "__session_continuity__",
+        k: 1,
+        excludeByCollection: {},
+      });
+      const continuityHit = continuityHits.results?.find(
+        (r) => r.id === "__session_continuity__"
+      );
+      if (!continuityHit) return null;
+
+      let meta: Record<string, unknown> = {};
+      if (continuityHit.metadataJson && (continuityHit.metadataJson as Uint8Array).length > 0) {
+        try {
+          meta = JSON.parse(new TextDecoder().decode(continuityHit.metadataJson as Uint8Array));
+        } catch { /* metadata parse failed, use empty */ }
+      }
+      const summaryId = meta.summary_id as string | undefined;
+      if (!summaryId) return null;
+
+      const expanded = await params.client.expandSummary({
+        sessionId: (meta.session_id as string) ?? params.sessionId,
+        summaryId,
+        maxDepth: 2,
+      });
+      if (!expanded.text) return null;
+
+      return '<continuity_context>\nThe following is a summary of the previous session. Use it for context about what was discussed before the reset.\n' + expanded.text + '\n</continuity_context>';
+    } catch {
+      return null;
+    }
+  }
+
   async function runCompaction(args: {
     sessionId: string;
     force?: boolean;
@@ -2386,8 +2428,19 @@ export function buildContextEngineFactory(
           emitDebug: true,
         });
         const assembled = normalizeAssembleResult(resp, args.messages);
+        const continuityContext = await injectContinuityContext({
+          client,
+          userId,
+          sessionId,
+          logger,
+          tokenBudget: args.tokenBudget,
+          systemPromptAddition: assembled.systemPromptAddition,
+        });
+        const withContinuity: OpenClawCompatibleAssembleResult = continuityContext
+          ? { ...assembled, systemPromptAddition: appendSystemPromptAddition(assembled.systemPromptAddition, continuityContext) }
+          : assembled;
         let enforced = enforceTokenBudgetInvariant(
-          await augmentWithExactRecall(assembled, {
+          await augmentWithExactRecall(withContinuity, {
             queryText: strippedPrompt || (messages[messages.length - 1]?.content ?? ""),
             userId,
             sessionId,
