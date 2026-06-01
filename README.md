@@ -318,12 +318,22 @@ libravdbd migrate --from ~/.libravdbd/data.libravdb --tenant <tenantId>
 
 ## Vector Service Configuration (YAML) & Kubernetes
 
-`libravdbd` is heavily configurable via environment variables or a YAML configuration file. The vector service looks for `config.yaml` in this order:
-1. `LIBRAVDB_CONFIG=/path/to/config.yaml`
+`libravdbd` is configured via environment variables or a YAML configuration file. The vector service looks for a config file in this order:
+
+1. `LIBRAVDB_CONFIG=/path/to/config.yaml` (env var — set this for custom paths)
 2. `/etc/libravdbd/config.yaml`
 3. `~/.libravdbd/config.yaml`
 
-Example `config.yaml` for a Kubernetes StatefulSet deployment in multi-tenant mode:
+Env vars override YAML values. All fields are optional — the daemon ships with sensible defaults.
+
+**Reference YAML files:**
+
+| Backend | File | Description |
+|---------|------|-------------|
+| GGUF (recommended) | [`docs/yaml/default-gguf.yaml`](docs/yaml/default-gguf.yaml) | llama.cpp backend, 3-5x faster on CPU |
+| ONNX (fallback) | [`docs/yaml/default-onnx.yaml`](docs/yaml/default-onnx.yaml) | ONNX Runtime backend, wider platform support |
+
+**Kubernetes example** (multi-tenant mode with GGUF):
 
 ```yaml
 # /etc/libravdbd/config.yaml
@@ -333,6 +343,7 @@ tenant_max_open: 128
 grpc_endpoint: "tcp:0.0.0.0:9090"
 embedding_backend: "gguf"
 embedding_profile: "nomic-embed-text-v1.5"
+llama_lib_path: "/var/lib/libravdbd/models/llama/llama-linux-amd64/lib/libllama.so"
 drain_timeout: "25s" # Must be less than k8s terminationGracePeriodSeconds
 ```
 
