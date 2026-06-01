@@ -158,10 +158,9 @@ function normalizeCompactResult(
   const overBudget = threshold != null && tokensBefore >= threshold;
   const engineRefused = !didCompact && overBudget;
 
-  const compactMetrics = response as (Partial<CompactSessionResponse> & { tokensAfter?: unknown }) | undefined;
   const tokensAfter =
-    didCompact && typeof compactMetrics?.tokensAfter === "number" && compactMetrics.tokensAfter > 0
-      ? compactMetrics.tokensAfter
+    didCompact && typeof response?.tokensAfter === "number" && response.tokensAfter > 0
+      ? response.tokensAfter
       : undefined;
 
   return {
