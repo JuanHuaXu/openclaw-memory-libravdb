@@ -384,7 +384,9 @@ export function createMemoryGrepTool(
     description:
       "Search compacted conversation history by text or regex pattern. " +
       "Searches across session summaries and raw turns. Returns matching snippets " +
-      "with summary/turn IDs for follow-up with memory_describe or memory_expand.",
+      "with summary/turn IDs for follow-up with memory_describe or memory_expand. " +
+      "Do NOT call if the information is already visible in your context window " +
+      "(from prior turns, <context_memory> blocks, or context assembly).",
     parameters: MEMORY_GREP_SCHEMA,
     execute: async (_toolCallId: string, rawParams: unknown): Promise<ToolResult<MemoryGrepDetails>> => {
       const params = asParams(rawParams);
