@@ -28,3 +28,4 @@
 - Guarded against undefined `session_id` in continuity fallback text.
 - Reduced exact recall search breadth from 32 to 10.
 - Requires daemon v1.8.8.
+
