@@ -4,7 +4,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { createMarkdownIngestionHandle } from "../../src/markdown-ingest.js";
+import { createMarkdownIngestionHandle, type FsDirentLike } from "../../src/markdown-ingest.js";
 
 type FsDirentLike = {
   name: string;
