@@ -70,7 +70,7 @@
     "@openclaw/plugin-inspector": "0.3.7",
     "@types/node": "^20.11.0",
     "esbuild": "^0.27.0",
-    "openclaw": "2026.4.11",
+    "openclaw": "2026.4.23",
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
@@ -80,5 +80,10 @@
     "@connectrpc/connect": "^1.7.0",
     "@connectrpc/connect-node": "^1.7.0",
     "@xdarkicex/libravdb-contracts": "^2.0.20"
+  },
+  "pnpm": {
+    "overrides": {
+      "undici": "8.3.0"
+    }
   }
 }
