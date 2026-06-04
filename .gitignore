@@ -33,3 +33,10 @@ bootstrap-perl.sh
 cpanfile
 pnpm-lock.yaml
 .claude/
+setup-findings.md
+multi-tenant-plan.md
+CONTEXT_ENGINE_MERKLE_DESIGN.md
+AGENT_MEMORY_COMPARISON.md
+LOSSLESS_CLAW_COMPARISON.md
+PLAN_BEFORE_TURN_KERNEL.md
+COMPARATIVE_ANALYSIS.md

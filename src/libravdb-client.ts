@@ -14,6 +14,8 @@ import path from "node:path";
 import type {
   AfterTurnKernelRequest,
   AfterTurnKernelResponse,
+  BeforeTurnKernelRequest,
+  BeforeTurnKernelResponse,
   AssembleContextInternalRequest,
   AssembleContextInternalResponse,
   BootstrapSessionKernelRequest,
@@ -55,6 +57,10 @@ import type {
   SearchTextResponse,
   SessionLifecycleHintRequest,
   SessionLifecycleHintResponse,
+  SummarizeMessagesRequest,
+  SummarizeMessagesResponse,
+  ExpandSummaryRequest,
+  ExpandSummaryResponse,
 } from "@xdarkicex/libravdb-contracts";
 
 export interface LibravDBClientOptions {
@@ -65,6 +71,9 @@ export interface LibravDBClientOptions {
   tlsMode?: "auto" | "tls" | "insecure";
   tlsClientCertPath?: string;
   tlsClientKeyPath?: string;
+  /** Stable tenant key for multi-agent DB routing. Attached as the
+   *  `libravdb-tenant-key` gRPC metadata header on every call. */
+  tenantKey?: string;
 }
 
 export function resolveClientEndpoint(configuredEndpoint?: string): string {
@@ -78,6 +87,8 @@ export function resolveClientEndpoint(configuredEndpoint?: string): string {
     path.join(os.homedir(), ".libravdbd", "run"),
     "/opt/homebrew/var/libravdbd/run",
     "/usr/local/var/libravdbd/run",
+    "/var/run/libravdbd",
+    "/run/libravdbd",
   ];
 
   for (const dir of candidateDirs) {
@@ -271,6 +282,16 @@ export class LibravDBClient {
       rpcMutex,
     });
 
+    const interceptors: Interceptor[] = [];
+    if (options.tenantKey) {
+      const tenantKey = options.tenantKey;
+      interceptors.push((next) => async (req) => {
+        req.header.set("libravdb-tenant-key", tenantKey);
+        return next(req);
+      });
+    }
+    interceptors.push(authInterceptor);
+
     const transport = createGrpcTransport({
       baseUrl: targetUrl,
       httpVersion: "2",
@@ -283,7 +304,7 @@ export class LibravDBClient {
             ...(isInsecure ? { rejectUnauthorized: false } : {}),
           },
       defaultTimeoutMs: options.timeoutMs ?? 30000,
-      interceptors: [authInterceptor],
+      interceptors,
     });
 
     this.client = createPromiseClient(LibravDB, transport);
@@ -454,6 +475,13 @@ export class LibravDBClient {
     return this.client.afterTurnKernel(req);
   }
 
+  async beforeTurnKernel(
+    req: PartialMessage<BeforeTurnKernelRequest>,
+  ): Promise<BeforeTurnKernelResponse> {
+    this.guardOpen();
+    return this.client.beforeTurnKernel(req);
+  }
+
   async assembleContextInternal(
     req: PartialMessage<AssembleContextInternalRequest>,
   ): Promise<AssembleContextInternalResponse> {
@@ -466,6 +494,20 @@ export class LibravDBClient {
   ): Promise<CompactSessionResponse> {
     this.guardOpen();
     return this.client.compactSession(req);
+  }
+
+  async summarizeMessages(
+    req: PartialMessage<SummarizeMessagesRequest>,
+  ): Promise<SummarizeMessagesResponse> {
+    this.guardOpen();
+    return this.client.summarizeMessages(req);
+  }
+
+  async expandSummary(
+    req: PartialMessage<ExpandSummaryRequest>,
+  ): Promise<ExpandSummaryResponse> {
+    this.guardOpen();
+    return this.client.expandSummary(req);
   }
 
   async rankCandidates(

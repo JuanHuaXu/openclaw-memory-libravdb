@@ -1,0 +1,52 @@
+# Vector Service — GGUF backend (recommended)
+#
+# Place at /etc/libravdbd/config.yaml, ~/.libravdbd/config.yaml,
+# or any path pointed to by LIBRAVDB_CONFIG.
+#
+# GGUF/llama.cpp is 3-5x faster than ONNX on CPU.
+# Requires libllama.dylib/.so and a .gguf model file.
+# Provision: scripts/provision.sh (shipped with the daemon release).
+#
+# All fields are optional. Env vars override YAML values.
+
+# --- storage ---
+db_path: ""
+
+# --- transport ---
+grpc_endpoint: ""            # unix:/path/to/sock or tcp:host:port
+
+# --- embedding ---
+embedding_backend: gguf      # gguf only — does not fall back to ONNX
+embedding_profile: nomic-embed-text-v1.5
+fallback_profile: bge-small-en-v1.5
+embedding_normalize: true
+embedding_dimensions: 768
+
+# --- gguf ---
+llama_lib_path: ""           # path to libllama.dylib/.so (empty = auto-resolve)
+                             # Linux example: /var/lib/libravdbd/models/llama/llama-linux-amd64/lib/libllama.so
+                             # macOS example: /opt/homebrew/opt/libravdbd/models/llama/llama-darwin-arm64/lib/libllama.dylib
+
+# --- summarizer ---
+summarizer_backend: bundled  # bundled (=extractive, always used regardless)
+
+# --- gating ---
+gating_threshold: 0.35
+gating_w1c: 0.35
+gating_w2c: 0.40
+gating_w3c: 0.25
+gating_w1t: 0.40
+gating_w2t: 0.35
+gating_w3t: 0.25
+gating_tech_norm: 1.5
+
+# --- timeouts ---
+embed_timeout: 5s
+drain_timeout: 25s
+
+# --- circuit breaker ---
+circuit_max_failures: 3
+circuit_cooldown: 60s
+
+# --- lifecycle ---
+lifecycle_journal_max_entries: 500

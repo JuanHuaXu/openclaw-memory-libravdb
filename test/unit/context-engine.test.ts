@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 
 import { buildContextEngineFactory } from "../../src/context-engine.js";
 import fs from "node:fs";
@@ -8,6 +10,21 @@ import { resolveIdentity } from "../../src/identity.js";
 import type { PluginConfig, SearchResult } from "../../src/types.js";
 import type { PluginRuntime } from "../../src/plugin-runtime.js";
 import type { LibravDBClient } from "../../src/libravdb-client.js";
+
+// ---------------------------------------------------------------------------
+// Clean persisted turn manifests from prior test runs so each run starts
+// with a blank manifest store.
+// ---------------------------------------------------------------------------
+{
+  const manifestDir = path.join(os.homedir(), ".openclaw", "libravdb-manifests");
+  if (fs.existsSync(manifestDir)) {
+    for (const entry of fs.readdirSync(manifestDir)) {
+      if (entry.startsWith("s1") || entry.startsWith("conformance-") || entry.startsWith("session-")) {
+        fs.rmSync(path.join(manifestDir, entry));
+      }
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Fake client — records every call with method + params so tests can assert
@@ -249,6 +266,113 @@ function makeMessage(role: string, content: string, id?: string) {
   return { role, content, ...(id ? { id } : {}) };
 }
 
+function openClawMetadataEnvelope(userText: string): string {
+  return [
+    "Conversation info (untrusted metadata):",
+    "```json",
+    "{",
+    '  "chat_id": "channel:example-channel",',
+    '  "group_channel": "#bots-everywhere",',
+    '  "group_space": "example-server",',
+    '  "message_id": "example-message",',
+    '  "sender_id": "example-sender",',
+    '  "was_mentioned": true',
+    "}",
+    "```",
+    "",
+    "Sender (untrusted metadata):",
+    "```json",
+    "{",
+    '  "id": "example-user-id",',
+    '  "username": "example-user",',
+    '  "tag": "example-user"',
+    "}",
+    "```",
+    "",
+    "Thread starter (untrusted, for context):",
+    "```json",
+    "{",
+    '  "body": "thread starter text"',
+    "}",
+    "```",
+    "",
+    "Reply target of current user message (untrusted, for context):",
+    "```json",
+    "{",
+    '  "body": "previous iMessage text"',
+    "}",
+    "```",
+    "",
+    "Forwarded message context (untrusted metadata):",
+    "```json",
+    "{",
+    '  "body": "forwarded message text"',
+    "}",
+    "```",
+    "",
+    "Chat history since last reply (untrusted, for context):",
+    "```json",
+    "[",
+    '  { "role": "user", "body": "recent chat text" }',
+    "]",
+    "```",
+    "",
+    "Chat history since last reply (untrusted, for context):",
+    "header-only chat summary",
+    "",
+    userText,
+  ].join("\n");
+}
+
+function timestampedOpenClawMetadataEnvelope(userText: string): string {
+  return `[Wed 2026-03-11 23:51 PDT] ${openClawMetadataEnvelope(userText)}`;
+}
+
+function openClawIMessageMetadataEnvelope(userText: string): string {
+  return [
+    "Conversation info (untrusted metadata):",
+    "```json",
+    "{",
+    '  "account_id": "imessage-main",',
+    '  "channel": "imessage",',
+    '  "provider": "imessage",',
+    '  "chat_id": 42,',
+    '  "chat_guid": "iMessage;+;chat42",',
+    '  "chat_identifier": "chat42",',
+    '  "chat_name": "Family thread",',
+    '  "is_group": true,',
+    '  "sender": "+15551234567",',
+    '  "message_id": "example-message"',
+    "}",
+    "```",
+    "",
+    "Sender (untrusted metadata):",
+    "```json",
+    "{",
+    '  "id": "+15551234567",',
+    '  "label": "Juan",',
+    '  "e164": "+15551234567"',
+    "}",
+    "```",
+    "",
+    "Reply target of current user message (untrusted, for context):",
+    "```json",
+    "{",
+    '  "body": "quoted private iMessage text"',
+    "}",
+    "```",
+    "",
+    "Chat history since last reply (untrusted, for context):",
+    "```json",
+    "[",
+    '  { "role": "user", "body": "recent private iMessage text" }',
+    "]",
+    "```",
+    "",
+    userText,
+  ].join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Conformance: every entrypoint path must converge on the same lifecycle hooks
 // with a stable sessionId, sessionKey, and durable userId.
@@ -294,18 +418,810 @@ test("context engine afterTurn resolves config userId and passes messages to dae
   const engine = buildContextEngineFactory(fakeRuntime(client), cfg);
 
   await engine.afterTurn({
-    sessionId: "s1",
+    sessionId: "s1-after-turn-config",
     sessionKey: "sk1",
     messages: [makeMessage("user", "hello"), makeMessage("assistant", "hi there")],
   });
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
-  assert.equal(call.params.sessionId, "s1");
+  assert.equal(call.params.sessionId, "s1-after-turn-config");
   assert.equal(call.params.sessionKey, "sk1");
   assert.equal(call.params.userId, "fixed-user");
   const msgs = call.params.messages as Array<unknown>;
   assert.equal(msgs.length, 2);
+});
+
+test("context engine afterTurn is idempotent when manifest has already ACKed every forwarded message", async () => {
+  const client = new FakeClient();
+  const cfg: PluginConfig = { userId: "fixed-user" };
+  const engine = buildContextEngineFactory(fakeRuntime(client), cfg);
+  const sessionId = `s1-after-turn-idempotent-${process.pid}`;
+  const messages = [
+    makeMessage("user", "stale edit request"),
+    makeMessage("assistant", "edit failed because old text did not match"),
+  ];
+
+  await engine.afterTurn({
+    sessionId,
+    sessionKey: "sk1",
+    messages,
+  });
+  const firstCallCount = client.calls.filter((c) => c.method === "afterTurnKernel").length;
+
+  const result = await engine.afterTurn({
+    sessionId,
+    sessionKey: "sk1",
+    messages,
+  });
+
+  const secondCallCount = client.calls.filter((c) => c.method === "afterTurnKernel").length;
+  assert.equal(firstCallCount, 1);
+  assert.equal(secondCallCount, 1, "duplicate afterTurn should not call daemon again");
+  assert.deepEqual(result, { ok: true, skipped: true, reason: "no-new-messages" });
+});
+
+test("context engine afterTurn strips OpenClaw untrusted metadata envelope before ingest", async () => {
+  const client = new FakeClient();
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  await engine.afterTurn({
+    sessionId: "s1-env-strip",
+    sessionKey: "sk1",
+    messages: [
+      makeMessage("user", timestampedOpenClawMetadataEnvelope("@User-1234 Reply with exactly PONG.")),
+    ],
+  });
+
+  const call = client.calls.find((c) => c.method === "afterTurnKernel");
+  assert.ok(call, "after_turn_kernel RPC was called");
+  const msgs = call.params.messages as Array<{ role: string; content: string }>;
+  assert.equal(msgs.length, 1);
+  assert.equal(msgs[0].role, "user");
+  assert.equal(
+    msgs[0].content,
+    "[OpenClaw context: channel=#bots-everywhere; channel_id=channel:example-channel; server_id=example-server; sender_id=example-sender; username=example-user; user_id=example-user-id]\n@User-1234 Reply with exactly PONG.",
+  );
+});
+
+test("context engine afterTurn strips iMessage envelope retaining routing context", async () => {
+  const client = new FakeClient();
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  await engine.afterTurn({
+    sessionId: "s1-imessage",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", openClawIMessageMetadataEnvelope("what did I say here?"))],
+  });
+
+  const call = client.calls.find((c) => c.method === "afterTurnKernel");
+  assert.ok(call, "after_turn_kernel RPC was called");
+  const content = (call.params.messages as Array<{ content: string }>)[0]?.content ?? "";
+  assert.match(content, /^\[OpenClaw context: /);
+  assert.match(content, /channel=imessage/);
+  assert.match(content, /account_id=imessage-main/);
+  assert.match(content, /provider=imessage/);
+  assert.match(content, /chat_id=42/);
+  assert.match(content, /chat_guid=iMessage \+ chat42/);
+  assert.match(content, /chat_identifier=chat42/);
+  assert.match(content, /chat_name=Family thread/);
+  assert.match(content, /is_group=true/);
+  assert.match(content, /sender=\+15551234567/);
+  assert.match(content, /username=Juan/);
+  assert.match(content, /user_id=\+15551234567/);
+  assert.match(content, /what did I say here\?/);
+  assert.doesNotMatch(content, /quoted private iMessage text/);
+  assert.doesNotMatch(content, /recent private iMessage text/);
+});
+
+test("context engine assemble strips OpenClaw untrusted metadata envelope from prompt", async () => {
+  const client = new FakeClient();
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  await engine.assemble({
+    sessionId: "s1",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "query")],
+    prompt: openClawMetadataEnvelope("@User-1234 Reply with exactly PONG."),
+    tokenBudget: 4000,
+  });
+
+  const call = client.calls.find((c) => c.method === "assembleContextInternal");
+  assert.ok(call, "assemble_context_internal RPC was called");
+  assert.equal(call.params.prompt, "@User-1234 Reply with exactly PONG.");
+});
+
+test("context engine assemble keeps live current-turn tool protocol visible", async () => {
+  const client = new FakeClient();
+  const messages = [
+    makeMessage("user", "please search butterflies", "user-1"),
+    {
+      role: "assistant",
+      id: "assistant-tool",
+      content: [{
+        type: "toolCall",
+        id: "call-1",
+        name: "web_search",
+        arguments: { query: "butterfly facts" },
+      }],
+    },
+    {
+      role: "toolResult",
+      id: "tool-result-1",
+      toolCallId: "call-1",
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          results: [{
+            title: "19 Fascinating Butterfly Facts",
+            url: "https://example.test/butterfly-facts",
+            content: "San Diego Zoo says butterflies taste with their feet.",
+          }],
+        }),
+      }],
+    },
+  ];
+  client.assembleResponse = {
+    messages,
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-live-tools",
+    sessionKey: "sk1",
+    messages,
+    prompt: "please search butterflies",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "please search butterflies", id: "user-1" },
+    {
+      role: "assistant",
+      id: "assistant-tool",
+      content: [{
+        type: "toolCall",
+        id: "call-1",
+        name: "web_search",
+        arguments: { query: "butterfly facts" },
+      }],
+    },
+    {
+      role: "toolResult",
+      id: "tool-result-1",
+      toolCallId: "call-1",
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          results: [{
+            title: "19 Fascinating Butterfly Facts",
+            url: "https://example.test/butterfly-facts",
+            content: "San Diego Zoo says butterflies taste with their feet.",
+          }],
+        }),
+      }],
+    },
+  ]);
+  assert.match(JSON.stringify(assembled.messages), /San Diego Zoo says butterflies taste with their feet/u);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /\[historical tool call/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /source="tool_call"/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /source="tool_result"/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /San Diego Zoo says butterflies taste with their feet/u);
+});
+
+test("context engine assemble drops completed previous-turn tool protocol from replay", async () => {
+  const client = new FakeClient();
+  const messages = [
+    makeMessage("user", "please search butterflies", "user-1"),
+    {
+      role: "assistant",
+      id: "assistant-tool",
+      content: [{
+        type: "toolCall",
+        id: "call-1",
+        name: "web_search",
+        arguments: { query: "butterfly facts" },
+      }],
+    },
+    {
+      role: "toolResult",
+      id: "tool-result-1",
+      toolCallId: "call-1",
+      content: [{
+        type: "text",
+        text: "San Diego Zoo says butterflies taste with their feet.",
+      }],
+    },
+    makeMessage(
+      "assistant",
+      "Here are the butterfly facts: butterflies taste with their feet.",
+      "assistant-final",
+    ),
+  ];
+  client.assembleResponse = {
+    messages,
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-completed-previous-tools",
+    sessionKey: "sk1",
+    messages,
+    prompt: "current unrelated request",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "please search butterflies", id: "user-1" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /toolResult|toolCall|San Diego Zoo/u);
+});
+
+test("context engine assemble drops completed tool-derived assistant answers from replay", async () => {
+  const client = new FakeClient();
+  const messages = [
+    makeMessage("user", "find a meme image", "user-1"),
+    {
+      role: "assistant",
+      id: "assistant-tool",
+      content: [{
+        type: "toolCall",
+        id: "call-1",
+        name: "searxng_search",
+        arguments: { query: "doge meme" },
+      }],
+    },
+    {
+      role: "toolResult",
+      id: "tool-result-1",
+      toolCallId: "call-1",
+      content: [{
+        type: "text",
+        text: "Recommended Discord image: MEDIA:https://example.test/doge.jpg",
+      }],
+    },
+    makeMessage(
+      "assistant",
+      "Top result: \"Doge family reunion\" from /r/memes\n\nMEDIA:https://example.test/doge.jpg",
+      "assistant-final",
+    ),
+    makeMessage("user", "current request", "current-user"),
+  ];
+  client.assembleResponse = {
+    messages,
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-tool-derived-answer",
+    sessionKey: "sk1",
+    messages,
+    prompt: "current request",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "find a meme image", id: "user-1" },
+    { role: "user", content: "current request", id: "current-user" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /Doge family reunion|MEDIA:|searxng_search/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /Doge family reunion|MEDIA:|searxng_search/u);
+});
+
+test("context engine assemble does not send historical tool protocol to daemon replay", async () => {
+  const client = new FakeClient();
+  const messages = [
+    makeMessage("user", "earlier search butterflies", "old-user"),
+    {
+      role: "assistant",
+      id: "old-tool-call",
+      content: [{
+        type: "toolCall",
+        id: "call-old",
+        name: "web_search",
+        arguments: { query: "butterfly facts" },
+      }],
+    },
+    {
+      role: "toolResult",
+      id: "old-tool-result",
+      toolCallId: "call-old",
+      content: [{
+        type: "text",
+        text: "San Diego Zoo says butterflies taste with their feet.",
+      }],
+    },
+    makeMessage("assistant", "[historical tool call: web_search]", "old-marker"),
+    makeMessage("user", "search fresh penguin meme", "current-user"),
+  ];
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-daemon-replay-tools",
+    sessionKey: "sk1",
+    messages,
+    prompt: "search fresh penguin meme",
+    tokenBudget: 4000,
+  });
+
+  const call = client.calls.find((c) => c.method === "assembleContextInternal");
+  assert.ok(call, "assemble_context_internal RPC was called");
+  assert.doesNotMatch(JSON.stringify(call.params.messages), /\[tool:|\[historical tool call|San Diego Zoo/u);
+  assert.match(JSON.stringify(call.params.messages), /search fresh penguin meme/u);
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "search fresh penguin meme", id: "current-user" },
+  ]);
+});
+
+test("context engine assemble keeps duplicate live tool protocol visible without ids", async () => {
+  const client = new FakeClient();
+  const toolCall = {
+    role: "assistant",
+    content: [{
+      type: "toolCall",
+      name: "web_search",
+      arguments: { query: "gold price" },
+    }],
+  };
+  const toolResult = {
+    role: "toolResult",
+    content: [{
+      type: "text",
+      text: "LIVE_GOLD_PRICE_RESULT",
+    }],
+  };
+  const sourceMessages = [
+    makeMessage("user", "earlier gold price"),
+    toolCall,
+    toolResult,
+    makeMessage("user", "gold price today"),
+    toolCall,
+    toolResult,
+  ];
+  client.assembleResponse = {
+    messages: [
+      makeMessage("user", "gold price today"),
+      toolCall,
+      toolResult,
+    ],
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-live-duplicate-tools",
+    sessionKey: "sk1",
+    messages: sourceMessages,
+    prompt: "gold price today",
+    tokenBudget: 4000,
+  });
+
+  assert.match(JSON.stringify(assembled.messages), /LIVE_GOLD_PRICE_RESULT/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /LIVE_GOLD_PRICE_RESULT/u);
+});
+
+test("context engine assemble moves historical tool calls and results out of assistant replay", async () => {
+  const client = new FakeClient();
+  const currentMessages = [
+    makeMessage("user", "please search butterflies", "current-user"),
+  ];
+  const historicalMessages = [
+    makeMessage("user", "earlier search butterflies", "user-1"),
+    {
+      role: "assistant",
+      id: "assistant-tool",
+      content: [{
+        type: "toolCall",
+        id: "call-1",
+        name: "web_search",
+        arguments: { query: "butterfly facts" },
+      }],
+    },
+    {
+      role: "toolResult",
+      id: "tool-result-1",
+      toolCallId: "call-1",
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          results: [{
+            title: "19 Fascinating Butterfly Facts",
+            url: "https://example.test/butterfly-facts",
+            content: "San Diego Zoo says butterflies taste with their feet.",
+          }],
+        }),
+      }],
+    },
+  ];
+  client.assembleResponse = {
+    messages: historicalMessages,
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-historical-tools",
+    sessionKey: "sk1",
+    messages: currentMessages,
+    prompt: "please search butterflies",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "please search butterflies", id: "current-user" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /\[historical tool call|San Diego Zoo/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /source="tool_call"/u);
+  assert.match(assembled.systemPromptAddition, /source="tool_result"/u);
+  assert.match(assembled.systemPromptAddition, /San Diego Zoo says butterflies taste with their feet/u);
+  assert.match(assembled.systemPromptAddition, /not prior assistant claims/u);
+});
+
+test("context engine assemble moves flattened historical tool text out of assistant replay", async () => {
+  const client = new FakeClient();
+  const messages = [
+    makeMessage("user", "please search butterflies", "user-1"),
+    makeMessage("assistant", "[historical tool call: web_search]", "assistant-marker"),
+    makeMessage("assistant", "Tool web_search not found", "assistant-tool-error"),
+    makeMessage("toolResult", "CRITICAL: Called tool_search with identical arguments and identical outcomes 6 times.", "tool-loop-error"),
+    makeMessage(
+      "assistant",
+      JSON.stringify([{ id: "openclaw:core:web_search", name: "web_search", description: "Search web." }]),
+      "assistant-catalog-json",
+    ),
+    makeMessage("assistant", "I can answer normally.", "assistant-normal"),
+  ];
+  client.assembleResponse = {
+    messages,
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-flattened-tools",
+    sessionKey: "sk1",
+    messages,
+    prompt: "please search butterflies",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "please search butterflies", id: "user-1" },
+    { role: "assistant", content: "I can answer normally.", id: "assistant-normal" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /\[historical tool call|Tool web_search not found|openclaw:core:web_search/u);
+  assert.match(assembled.systemPromptAddition, /source="tool_activity"/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /historical tool call: web_search/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /Tool web_search not found/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /CRITICAL: Called tool_search/u);
+  assert.match(assembled.systemPromptAddition, /openclaw:core:web_search/u);
+});
+
+test("context engine assemble strips historical tool syntax from memory system additions", async () => {
+  const client = new FakeClient();
+  client.assembleResponse = {
+    messages: [makeMessage("user", "current request", "current-user")],
+    estimatedTokens: 64,
+    systemPromptAddition: [
+      "<recent_session_tail>",
+      "Treat this as preserved history.",
+      "[T1] <entry role=\"assistant\" source=\"session\">...",
+      "[tool:web_search] {\"query\":\"butterflies\",\"count\":10}</entry>",
+      "</recent_session_tail>",
+      "<retrieved_memory>",
+      "<memory_item source=\"tool_activity\">[historical tool call: web_fetch]</memory_item>",
+      "</retrieved_memory>",
+    ].join("\n"),
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-system-addition-tools",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "current request", "current-user")],
+    prompt: "current request",
+    tokenBudget: 4000,
+  });
+
+  assert.match(assembled.systemPromptAddition, /recent_session_tail/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /\[tool:|\[historical tool call|web_fetch|web_search/u);
+  assert.match(JSON.stringify(assembled.messages), /current request/u);
+});
+
+test("context engine assemble preserves ordinary JSON with name fields in memory additions", async () => {
+  const client = new FakeClient();
+  client.assembleResponse = {
+    messages: [makeMessage("user", "current request", "current-user")],
+    estimatedTokens: 64,
+    systemPromptAddition: [
+      "<retrieved_memory>",
+      "<memory_item>{\"name\":\"computment\",\"note\":\"visible channel name\"}</memory_item>",
+      "<memory_item>{\"name\":\"web_search\",\"arguments\":{\"query\":\"old\"}}</memory_item>",
+      "</retrieved_memory>",
+    ].join("\n"),
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-system-addition-name-json",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "current request", "current-user")],
+    prompt: "current request",
+    tokenBudget: 4000,
+  });
+
+  assert.match(assembled.systemPromptAddition, /"name":"computment"/u);
+  assert.match(assembled.systemPromptAddition, /visible channel name/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /"arguments":\{"query":"old"\}/u);
+});
+
+test("context engine assemble strips historical OpenClaw delivery directives from assistant replay", async () => {
+  const client = new FakeClient();
+  const messages = [
+    makeMessage("user", "old image request", "old-user"),
+    makeMessage(
+      "assistant",
+      "Here is the old image\n\nMEDIA:https://i.redd.it/dead-link.jpg",
+      "assistant-media",
+    ),
+    makeMessage("assistant", "[[reply_to_current]][[audio_as_voice]]", "assistant-marker-only"),
+    makeMessage(
+      "assistant",
+      "[[reply_to:12345]]\nUseful answer after directive.",
+      "assistant-reply-directive",
+    ),
+    makeMessage("user", "Please explain the literal MEDIA:<url> syntax.", "user-literal-directive"),
+    makeMessage("user", "current request", "current-user"),
+  ];
+  client.assembleResponse = {
+    messages,
+    estimatedTokens: 64,
+    systemPromptAddition: [
+      "<recent_session_tail>",
+      "[T1] <entry role=\"assistant\" source=\"session\">MEDIA:https://i.redd.it/old.jpg</entry>",
+      "[T2] <entry role=\"assistant\" source=\"session\">[[reply_to_current]]Still useful.</entry>",
+      "</recent_session_tail>",
+    ].join("\n"),
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-openclaw-directives",
+    sessionKey: "sk1",
+    messages,
+    prompt: "current request",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "old image request", id: "old-user" },
+    { role: "assistant", content: "Here is the old image", id: "assistant-media" },
+    { role: "assistant", content: "Useful answer after directive.", id: "assistant-reply-directive" },
+    { role: "user", content: "Please explain the literal MEDIA:<url> syntax.", id: "user-literal-directive" },
+    { role: "user", content: "current request", id: "current-user" },
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(assembled.messages.filter((message) => message.role === "assistant")),
+    /MEDIA:|i\.redd\.it|\[\[reply_to|\[\[audio_as_voice/u,
+  );
+  assert.match(JSON.stringify(assembled.messages), /literal MEDIA:<url> syntax/u);
+  assert.match(assembled.systemPromptAddition, /Still useful/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /i\.redd\.it|\[\[reply_to|\[\[audio_as_voice/u);
+});
+
+test("context engine assemble drops historical assistant action promises from replay", async () => {
+  const client = new FakeClient();
+  const messages = [
+    makeMessage("user", "find a meme", "old-user"),
+    makeMessage(
+      "assistant",
+      "Let me search for a top meme from Reddit and find a direct image URL.",
+      "assistant-progress-only",
+    ),
+    makeMessage(
+      "assistant",
+      "Looking for working class memes...\n\nResult: \"Working class people\"",
+      "assistant-result-stub",
+    ),
+    makeMessage(
+      "assistant",
+      "Here are the results: https://example.test/meme\nMEDIA:https://example.test/meme.png",
+      "assistant-real-answer",
+    ),
+    makeMessage("user", "current request", "current-user"),
+  ];
+  client.assembleResponse = {
+    messages,
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-action-promises",
+    sessionKey: "sk1",
+    messages,
+    prompt: "current request",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "find a meme", id: "old-user" },
+    {
+      role: "assistant",
+      content: "Here are the results: https://example.test/meme",
+      id: "assistant-real-answer",
+    },
+    { role: "user", content: "current request", id: "current-user" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /Let me search/u);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /Working class people/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /Let me search|Working class people|MEDIA:/u);
+});
+
+test("context engine assemble preserves ordinary assistant planning language", async () => {
+  const client = new FakeClient();
+  const messages = [
+    makeMessage("user", "architecture question", "old-user"),
+    makeMessage("assistant", "I will use SQLite for the user-card store.", "assistant-plan"),
+    makeMessage("assistant", "I'll try a smaller local model for summarization.", "assistant-try"),
+    makeMessage("user", "current request", "current-user"),
+  ];
+  client.assembleResponse = {
+    messages,
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-preserve-planning-language",
+    sessionKey: "sk1",
+    messages,
+    prompt: "current request",
+    tokenBudget: 4000,
+  });
+
+  assert.match(JSON.stringify(assembled.messages), /I will use SQLite/u);
+  assert.match(JSON.stringify(assembled.messages), /I'll try a smaller local model/u);
+});
+
+test("context engine fallback drops provider-visible historical tool markers", async () => {
+  const client = new FakeClient();
+  client.assembleContextInternal = async (params: Record<string, unknown>) => {
+    client.calls.push({ method: "assembleContextInternal", params });
+    throw new Error("daemon unavailable");
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-fallback-historical-tools",
+    sessionKey: "sk1",
+    messages: [
+      makeMessage("user", "old search", "old-user"),
+      makeMessage("assistant", "[historical tool call: web_search]", "old-marker"),
+      makeMessage("assistant", "Useful answer\n[historical tool call: web_fetch]", "mixed-marker"),
+      makeMessage("user", "current request", "current-user"),
+    ],
+    prompt: "current request",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "old search", id: "old-user" },
+    { role: "assistant", content: "Useful answer", id: "mixed-marker" },
+    { role: "user", content: "current request", id: "current-user" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /historical tool|web_fetch|web_search/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /historical tool|web_fetch|web_search/u);
+});
+
+test("context engine predictive compaction fallback drops provider-visible historical tool markers", async () => {
+  const client = new FakeClient();
+  const engine = buildContextEngineFactory(fakeRuntime(client), {
+    userId: "fixed-user",
+    compactionThresholdFraction: 0.8,
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-predictive-fallback-historical-tools",
+    sessionKey: "sk1",
+    messages: [
+      makeMessage("user", "old search", "old-user"),
+      makeMessage("assistant", "[historical tool call: web_search]", "old-marker"),
+      makeMessage("assistant", "Useful answer\n[historical tool call: web_fetch]", "mixed-marker"),
+      makeMessage("user", "current request", "current-user"),
+    ],
+    prompt: "current request",
+    tokenBudget: 4000,
+    currentTokenCount: 5000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "old search", id: "old-user" },
+    { role: "assistant", content: "Useful answer", id: "mixed-marker" },
+    { role: "user", content: "current request", id: "current-user" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /historical tool|web_fetch|web_search/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /historical tool|web_fetch|web_search/u);
+});
+
+test("context engine afterTurn strips envelope with leading media preamble", async () => {
+  const client = new FakeClient();
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const preambleLine = "[📎 Media attachment — image.png]";
+  const envelopedText = `${preambleLine}\n${openClawMetadataEnvelope("@User-1234 check this image")}`;
+
+  await engine.afterTurn({
+    sessionId: "s1-preamble",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", envelopedText)],
+  });
+
+  const call = client.calls.find((c) => c.method === "afterTurnKernel");
+  assert.ok(call, "after_turn_kernel RPC was called");
+  const content = (call.params.messages as Array<{ content: string }>)[0]?.content ?? "";
+  assert.match(content, /^\[📎 Media attachment/);
+  assert.match(content, /\[OpenClaw context: /);
+  assert.match(content, /@User-1234 check this image/);
+  assert.doesNotMatch(content, /untrusted metadata/);
+});
+
+test("context engine afterTurn preserves content when envelope header has no fence or blank line", async () => {
+  const client = new FakeClient();
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  // Header present but no fence and no blank line — malformed, should pass through unchanged.
+  const malformed = "Conversation info (untrusted metadata): some garbage without proper structure";
+
+  await engine.afterTurn({
+    sessionId: "s1-no-fence",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", malformed)],
+  });
+
+  const call = client.calls.find((c) => c.method === "afterTurnKernel");
+  assert.ok(call, "after_turn_kernel RPC was called");
+  const content = (call.params.messages as Array<{ content: string }>)[0]?.content ?? "";
+  assert.equal(content, malformed);
+});
+
+test("context engine afterTurn preserves content when envelope fence is unclosed", async () => {
+  const client = new FakeClient();
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  // Header with fence start but no closing fence — malformed, should pass through unchanged.
+  const malformed = [
+    "Conversation info (untrusted metadata):",
+    "```json",
+    "{",
+    '  "chat_id": "channel:partial",',
+    '  "group_channel": "#incomplete"',
+    // No closing ``` — fence is unclosed.
+    "",
+    "@User-1234 actual message",
+  ].join("\n");
+
+  await engine.afterTurn({
+    sessionId: "s1-unclosed-fence",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", malformed)],
+  });
+
+  const call = client.calls.find((c) => c.method === "afterTurnKernel");
+  assert.ok(call, "after_turn_kernel RPC was called");
+  const content = (call.params.messages as Array<{ content: string }>)[0]?.content ?? "";
+  assert.equal(content, malformed);
 });
 
 test("context engine assemble resolves config userId and passes it to daemon", async () => {
@@ -518,15 +1434,16 @@ test("context engine skips predictive context when it cannot fit within the toke
     ],
   };
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+  const sessionId = `s1-predictive-escape-${process.pid}`;
 
   await engine.afterTurn({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "remember this")],
   });
 
   const assembled = await engine.assemble({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",
@@ -1236,15 +2153,16 @@ test("context engine escapes predictive context text before injecting it into th
     ],
   };
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+  const sessionId = `s1-predictive-budget-${process.pid}`;
 
   await engine.afterTurn({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "remember this")],
   });
 
   const assembled = await engine.assemble({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",
@@ -1367,15 +2285,16 @@ test("predictive context injects items item-by-item, dropping tail items when bu
     ],
   };
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+  const sessionId = `s1-predictive-truncate-${process.pid}`;
 
   await engine.afterTurn({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "remember this")],
   });
 
   const assembled = await engine.assemble({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",
@@ -1405,15 +2324,16 @@ test("predictive context inner-truncates an oversized prediction with [truncated
     ],
   };
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+  const sessionId = `s1-predictive-oversized-${process.pid}`;
 
   await engine.afterTurn({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "remember this")],
   });
 
   const assembled = await engine.assemble({
-    sessionId: "s1",
+    sessionId,
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",

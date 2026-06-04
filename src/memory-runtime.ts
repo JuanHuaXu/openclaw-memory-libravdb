@@ -16,10 +16,13 @@ type MemorySearchParams = {
   maxResults?: number;
   minScore?: number;
   topK?: number;
+  corpus?: "all" | "memory" | "sessions";
   userId?: string;
   agentId?: string;
   sessionId?: string;
   sessionKey?: string;
+  kind?: string;
+  signals?: string[];
   context?: {
     userId?: string;
     agentId?: string;
@@ -83,6 +86,7 @@ function createMemorySearchManager(
             query: queryOrParams,
             limit: opts.limit ?? opts.k ?? opts.maxResults ?? opts.topK,
             minScore: opts.minScore,
+            corpus: opts.corpus,
             sessionId: opts.sessionId,
             sessionKey: opts.sessionKey,
             userId: opts.userId,
@@ -96,6 +100,7 @@ function createMemorySearchManager(
       }
 
       const dreamQuery = detectDreamQuerySignal(queryText);
+      const searchCorpus = normalizeSearchCorpus(params.corpus);
       const sessionId = firstString(params.sessionId, params.context?.sessionId);
       const explicitUserId = firstString(params.userId, params.context?.userId);
       const resolvedUserId =
@@ -111,22 +116,27 @@ function createMemorySearchManager(
       const minScore = normalizeNumber(params.minScore);
       const client = await getClient();
 
-      const result = dreamQuery.active && cfg.crossSessionRecall !== false
+      const result = dreamQuery.active && cfg.crossSessionRecall !== false && searchCorpus !== "sessions"
         ? await client.searchText({
             collection: resolveDreamCollection(userId),
             text: queryText,
             k,
           })
-        : await searchResolvedCollections(client, cfg, userId, sessionId, queryText, k);
+        : await searchResolvedCollections(client, cfg, userId, sessionId, queryText, k, searchCorpus, params.kind, params.signals);
       const filteredResults =
         minScore === undefined
           ? result.results
           : result.results.filter((item) => item.score >= minScore);
 
-      const legacyResults = filteredResults.map((item) => ({
-        ...item,
-        content: item.text,
-      }));
+      const legacyResults = filteredResults.map((item) => {
+        const meta = parseMetadataJson(item);
+        const text = resolveSearchResultText(item, meta);
+        return {
+          ...item,
+          text,
+          content: text,
+        };
+      });
       if (legacyCall) {
         return { results: legacyResults };
       }
@@ -134,8 +144,9 @@ function createMemorySearchManager(
         const meta = parseMetadataJson(item);
         const collection = typeof meta.collection === "string" ? meta.collection : "memory";
         const relPath = encodeSearchResultPath(collection, item.id);
-        returnedSearchPaths.set(relPath, item.text);
-        return toMemorySearchResult(item);
+        const text = resolveSearchResultText(item, meta);
+        returnedSearchPaths.set(relPath, text);
+        return toMemorySearchResult(item, meta, text);
       });
       return memoryResults;
     },
@@ -187,37 +198,58 @@ async function searchResolvedCollections(
   sessionId: string | undefined,
   queryText: string,
   k: number,
+  corpus: "all" | "memory" | "sessions",
+  kind?: string,
+  signals?: string[],
 ): Promise<{ results: ProtoSearchResult[] }> {
-  const collections = resolveSearchCollections(cfg, userId, sessionId);
+  const collections = resolveSearchCollections(cfg, userId, sessionId, corpus);
   if (collections.length === 0) {
     return { results: [] };
   }
+  const kindFilter = kind || undefined;
+  const signalFilter = (signals && signals.length > 0) ? signals : undefined;
   return collections.length === 1
     ? await client.searchText({
         collection: collections[0],
         text: queryText,
         k,
+        kind: kindFilter,
+        signals: signalFilter,
       })
     : await client.searchTextCollections({
         collections,
         text: queryText,
         k,
         excludeByCollection: {},
+        kind: kindFilter,
+        signals: signalFilter,
       });
 }
 
-function resolveSearchCollections(cfg: PluginConfig, userId: string, sessionId?: string): string[] {
+function resolveSearchCollections(
+  cfg: PluginConfig,
+  userId: string,
+  sessionId: string | undefined,
+  corpus: "all" | "memory" | "sessions",
+): string[] {
+  if (corpus === "sessions") {
+    return sessionId ? [resolveSessionSearchCollection(cfg, sessionId)] : [];
+  }
+
+  const durableCollections = [resolveUserCollection(userId), "global"];
+  if (corpus === "memory") {
+    return durableCollections;
+  }
+
   if (cfg.crossSessionRecall === false) {
     return sessionId ? [resolveSessionSearchCollection(cfg, sessionId)] : [];
   }
 
-  const collections = [resolveUserCollection(userId), "global"];
   if (!sessionId) {
-    return collections;
+    return durableCollections;
   }
 
-  collections.unshift(resolveSessionSearchCollection(cfg, sessionId));
-  return collections;
+  return [resolveSessionSearchCollection(cfg, sessionId), ...durableCollections];
 }
 
 function resolveSessionSearchCollection(cfg: PluginConfig, sessionId: string): string {
@@ -243,6 +275,10 @@ function firstString(...values: Array<string | undefined>): string | undefined {
   return undefined;
 }
 
+function normalizeSearchCorpus(value: unknown): "all" | "memory" | "sessions" {
+  return value === "memory" || value === "sessions" ? value : "all";
+}
+
 function parseMetadataJson(item: { metadataJson?: Uint8Array }): Record<string, unknown> {
   if (item.metadataJson && item.metadataJson.length > 0) {
     try {
@@ -254,15 +290,28 @@ function parseMetadataJson(item: { metadataJson?: Uint8Array }): Record<string, 
   return {};
 }
 
-function toMemorySearchResult(item: ProtoSearchResult) {
-  const meta = parseMetadataJson(item);
+function resolveSearchResultText(
+  item: ProtoSearchResult,
+  meta: Record<string, unknown> = parseMetadataJson(item),
+): string {
+  if (typeof item.text === "string" && item.text.length > 0) {
+    return item.text;
+  }
+  return typeof meta.text === "string" ? meta.text : item.text;
+}
+
+function toMemorySearchResult(
+  item: ProtoSearchResult,
+  meta: Record<string, unknown> = parseMetadataJson(item),
+  text = resolveSearchResultText(item, meta),
+) {
   const collection = typeof meta.collection === "string" ? meta.collection : "memory";
   return {
     path: encodeSearchResultPath(collection, item.id),
     startLine: 1,
-    endLine: Math.max(1, item.text.split("\n").length),
+    endLine: Math.max(1, text.split("\n").length),
     score: item.score,
-    snippet: item.text,
+    snippet: text,
     source: collection.startsWith("session:") || collection.startsWith("session_") ? "sessions" : "memory",
     citation: `${collection}:${item.id}`,
   };

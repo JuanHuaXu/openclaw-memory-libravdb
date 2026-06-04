@@ -49,16 +49,40 @@ jobs:
           ref: main
           path: libravdb-contracts
 
-      - name: Diagnostic checkout snapshot
+      - name: Verify contracts version alignment
         run: |
-          echo "plugin HEAD: $(git -C openclaw-memory-libravdb rev-parse HEAD)"
-          echo "contracts HEAD: $(git -C libravdb-contracts rev-parse HEAD)"
-          echo "plugin package.json:"
-          sed -n '1,80p' openclaw-memory-libravdb/package.json
-          echo "contracts package.json:"
-          sed -n '1,80p' libravdb-contracts/package.json
-          echo "contracts lockfile @types/node hits:"
-          grep -n '@types/node' libravdb-contracts/pnpm-lock.yaml || true
+          PLUGIN_DECLARED=$(node -p "require('./openclaw-memory-libravdb/package.json').dependencies['@xdarkicex/libravdb-contracts']")
+          echo "plugin declares: $PLUGIN_DECLARED"
+
+          LOCKED_VERSION=$(grep -A2 "'@xdarkicex/libravdb-contracts':" openclaw-memory-libravdb/pnpm-lock.yaml | grep 'version:' | awk '{print $2}' | tr -d '"' | head -1)
+          echo "lockfile resolves to: ${LOCKED_VERSION:-none}"
+
+          if [ -z "${LOCKED_VERSION}" ]; then
+            echo ""
+            echo "ERROR: Could not resolve @xdarkicex/libravdb-contracts version from lockfile."
+            echo "Run: cd openclaw-memory-libravdb && pnpm install"
+            exit 1
+          fi
+
+          # Verify lockfile resolves to at least the minimum declared version.
+          # PLUGIN_DECLARED is a semver range (e.g. ^2.0.12); strip the prefix
+          # to get the floor and compare major.minor.patch.
+          MIN_EXPECTED=$(echo "$PLUGIN_DECLARED" | sed 's/^[\^~>=<]*//')
+          echo "minimum expected: $MIN_EXPECTED"
+
+          node -e "
+            const min = '$MIN_EXPECTED'.split('.').map(Number);
+            const locked = '$LOCKED_VERSION'.split('.').map(Number);
+            const behind = locked[0] < min[0] ||
+              (locked[0] === min[0] && locked[1] < min[1]) ||
+              (locked[0] === min[0] && locked[1] === min[1] && locked[2] < min[2]);
+            if (behind) {
+              console.error('ERROR: Lockfile version ' + '$LOCKED_VERSION' + ' is behind declared minimum ' + '$MIN_EXPECTED' + '.');
+              console.error('Run: cd openclaw-memory-libravdb && pnpm update @xdarkicex/libravdb-contracts@' + '$PLUGIN_DECLARED');
+              process.exit(1);
+            }
+          " || exit 1
+          echo "Contracts version aligned (lockfile $LOCKED_VERSION >= $MIN_EXPECTED)."
 
       - uses: bufbuild/buf-setup-action@v1
         with:
