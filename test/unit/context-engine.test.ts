@@ -891,6 +891,60 @@ test("context engine assemble keeps duplicate live tool protocol visible without
   assert.doesNotMatch(assembled.systemPromptAddition, /LIVE_GOLD_PRICE_RESULT/u);
 });
 
+test("context engine assemble maps repeated no-id live tool protocol in source order", async () => {
+  const client = new FakeClient();
+  const flattenedToolCall = '[tool:web_search] {"query":"gold price"}';
+  const toolCallContent = [{
+    type: "toolCall",
+    name: "web_search",
+    arguments: { query: "gold price" },
+  }];
+  const toolResultContent = [{
+    type: "text",
+    text: "SAME_RESULT_TEXT",
+  }];
+  const firstToolCall = { role: "assistant", content: toolCallContent, marker: "first-call" };
+  const firstToolResult = { role: "toolResult", content: toolResultContent, marker: "first-result" };
+  const secondToolCall = { role: "assistant", content: toolCallContent, marker: "second-call" };
+  const secondToolResult = { role: "toolResult", content: toolResultContent, marker: "second-result" };
+  const sourceMessages = [
+    makeMessage("user", "gold price today"),
+    firstToolCall,
+    firstToolResult,
+    secondToolCall,
+    secondToolResult,
+  ];
+  client.assembleResponse = {
+    messages: [
+      makeMessage("user", "gold price today"),
+      makeMessage("assistant", flattenedToolCall),
+      makeMessage("toolResult", "SAME_RESULT_TEXT"),
+      makeMessage("assistant", flattenedToolCall),
+      makeMessage("toolResult", "SAME_RESULT_TEXT"),
+    ],
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-live-duplicate-tools-ordered",
+    sessionKey: "sk1",
+    messages: sourceMessages,
+    prompt: "gold price today",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "gold price today" },
+    firstToolCall,
+    firstToolResult,
+    secondToolCall,
+    secondToolResult,
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /\[tool:web_search\]/u);
+});
+
 test("context engine assemble moves historical tool calls and results out of assistant replay", async () => {
   const client = new FakeClient();
   const currentMessages = [
