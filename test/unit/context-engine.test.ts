@@ -945,6 +945,54 @@ test("context engine assemble maps repeated no-id live tool protocol in source o
   assert.doesNotMatch(JSON.stringify(assembled.messages), /\[tool:web_search\]/u);
 });
 
+test("context engine assemble does not duplicate consumed live tool protocol", async () => {
+  const client = new FakeClient();
+  const flattenedToolCall = '[tool:web_search] {"query":"gold price"}';
+  const sourceToolCall = {
+    role: "assistant",
+    content: [{
+      type: "toolCall",
+      name: "web_search",
+      arguments: { query: "gold price" },
+    }],
+  };
+  const sourceToolResult = {
+    role: "toolResult",
+    content: [{ type: "text", text: "SAME_RESULT_TEXT" }],
+  };
+  client.assembleResponse = {
+    messages: [
+      makeMessage("user", "gold price today"),
+      makeMessage("assistant", flattenedToolCall),
+      makeMessage("toolResult", "SAME_RESULT_TEXT"),
+      makeMessage("assistant", flattenedToolCall),
+      makeMessage("toolResult", "SAME_RESULT_TEXT"),
+    ],
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-live-duplicate-daemon-extra",
+    sessionKey: "sk1",
+    messages: [
+      makeMessage("user", "gold price today"),
+      sourceToolCall,
+      sourceToolResult,
+    ],
+    prompt: "gold price today",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "gold price today" },
+    sourceToolCall,
+    sourceToolResult,
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /\[tool:web_search\]/u);
+});
+
 test("context engine assemble moves historical tool calls and results out of assistant replay", async () => {
   const client = new FakeClient();
   const currentMessages = [

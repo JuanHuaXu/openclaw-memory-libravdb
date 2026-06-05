@@ -413,7 +413,7 @@ function findLiveToolProtocolSourceMessage(
     sourceMessages,
     searchStartIndex,
   );
-  if (sourceIndex < 0 || sourceIndex <= lastUserIndex) return undefined;
+  if (sourceIndex < searchStartIndex) return undefined;
   if (hasCompletedAssistantResponseAfter(sourceMessages, sourceIndex)) return undefined;
 
   const sourceMessage = sourceMessages[sourceIndex];
