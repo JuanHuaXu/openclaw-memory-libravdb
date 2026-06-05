@@ -991,6 +991,7 @@ test("context engine assemble does not duplicate consumed live tool protocol", a
     sourceToolResult,
   ]);
   assert.doesNotMatch(JSON.stringify(assembled.messages), /\[tool:web_search\]/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /SAME_RESULT_TEXT|\[tool:web_search\]/u);
 });
 
 test("context engine assemble moves historical tool calls and results out of assistant replay", async () => {

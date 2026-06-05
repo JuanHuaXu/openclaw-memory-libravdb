@@ -370,6 +370,48 @@ function hasToolProtocolBeforeSinceLastUser(
   return false;
 }
 
+// Live tool protocol must come back from daemon replay in source order.
+// Out-of-order or already-consumed fragments are unsafe to restore or demote.
+function findCurrentTurnToolProtocolSourceIndex(
+  message: { role: string; content?: unknown; id?: string; [key: string]: unknown },
+  normalizedContent: string,
+  sourceMessages: OpenClawCompatibleMessage[] | undefined,
+  preferredStartIndex?: number,
+): number {
+  if (!sourceMessages) return -1;
+  if (!isToolResultRole(message.role) && message.role !== "assistant" && !hasKernelToolCallBlock(message.content)) {
+    return -1;
+  }
+
+  const lastUserIndex = findLastUserMessageIndex(sourceMessages);
+  if (lastUserIndex < 0) return -1;
+  const searchStartIndex = preferredStartIndex === undefined
+    ? lastUserIndex + 1
+    : Math.max(lastUserIndex + 1, preferredStartIndex);
+  const sourceIndex = findMatchingSourceMessageIndex(
+    message,
+    normalizedContent,
+    sourceMessages,
+    searchStartIndex,
+  );
+  if (sourceIndex < searchStartIndex) return -1;
+  if (hasCompletedAssistantResponseAfter(sourceMessages, sourceIndex)) return -1;
+
+  const sourceMessage = sourceMessages[sourceIndex];
+  if (!sourceMessage) return -1;
+  if (sourceMessage.role === "assistant" && hasKernelToolCallBlock(sourceMessage.content)) {
+    return sourceIndex;
+  }
+  if (isToolResultRole(sourceMessage.role)) {
+    const toolCallId = getToolResultCallId(sourceMessage) ?? getToolResultCallId(message);
+    if (hasLiveToolCallBefore(sourceMessages, lastUserIndex, sourceIndex, toolCallId)) {
+      return sourceIndex;
+    }
+  }
+
+  return -1;
+}
+
 function findSourceMessageIndex(
   message: { role: string; content?: unknown; id?: string },
   normalizedContent: string,
@@ -407,14 +449,13 @@ function findLiveToolProtocolSourceMessage(
   const searchStartIndex = preferredStartIndex === undefined
     ? lastUserIndex + 1
     : Math.max(lastUserIndex + 1, preferredStartIndex);
-  const sourceIndex = findMatchingSourceMessageIndex(
+  const sourceIndex = findCurrentTurnToolProtocolSourceIndex(
     message,
     normalizedContent,
     sourceMessages,
     searchStartIndex,
   );
-  if (sourceIndex < searchStartIndex) return undefined;
-  if (hasCompletedAssistantResponseAfter(sourceMessages, sourceIndex)) return undefined;
+  if (sourceIndex !== searchStartIndex) return undefined;
 
   const sourceMessage = sourceMessages[sourceIndex];
   if (!sourceMessage) return undefined;
@@ -1038,6 +1079,9 @@ function sanitizeProviderReplayMessage(
   if (liveToolProtocolSource) {
     return preserveLiveToolProtocolMessage(liveToolProtocolSource.message);
   }
+  if (findCurrentTurnToolProtocolSourceIndex(message, content, sourceMessages) >= 0) {
+    return null;
+  }
 
   if (isToolResultRole(message.role) || hasKernelToolCallBlock(message.content)) {
     return null;
@@ -1612,6 +1656,8 @@ export function normalizeAssembleResult(
       if (liveToolProtocolSource) {
         messages.push(preserveLiveToolProtocolMessage(liveToolProtocolSource.message));
         liveSourceCursor = liveToolProtocolSource.index + 1;
+      } else if (findCurrentTurnToolProtocolSourceIndex(message, content, sourceMessages) >= 0) {
+        continue;
       } else if (isRealTranscript && !historicalToolSource && isProviderReplayRole(message.role)) {
         if (isHistoricalToolDerivedAssistantReply(message, content, sourceMessages)) {
           continue;
