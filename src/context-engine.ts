@@ -1801,18 +1801,27 @@ export function normalizeAssembleResult(
         messages.push(preserveLiveToolProtocolMessage(liveToolProtocolSource.message));
         liveSourceCursor = liveToolProtocolSource.index + 1;
       } else if (findLiveToolSourceInCurrentTurn(message, content, sourceMessages, undefined, lastUserIndex >= 0 ? lastUserIndex : undefined) >= 0) {
-        if (liveSourceCursor !== undefined) liveSourceCursor++;
+        if (liveSourceCursor !== undefined && sourceMessages) {
+          const idx = findMatchingSourceMessageIndex(message, content, sourceMessages, liveSourceCursor);
+          if (idx >= liveSourceCursor) liveSourceCursor = idx + 1;
+        }
         continue;
       } else if (isRealTranscript && !historicalToolSource && isProviderReplayRole(message.role)) {
         if (isHistoricalToolDerivedAssistantReply(message, content, sourceMessages)) {
-          if (liveSourceCursor !== undefined) liveSourceCursor++;
+          if (liveSourceCursor !== undefined && sourceMessages) {
+            const idx = findMatchingSourceMessageIndex(message, content, sourceMessages, liveSourceCursor);
+            if (idx >= liveSourceCursor) liveSourceCursor = idx + 1;
+          }
           continue;
         }
         const sanitizedContent = sanitizeToolCallPatterns(content, {
           stripOpenClawDirectives: message.role === "assistant",
         });
         if (isHistoricalAssistantActionPromise(message.role, sanitizedContent)) {
-          if (liveSourceCursor !== undefined) liveSourceCursor++;
+          if (liveSourceCursor !== undefined && sourceMessages) {
+            const idx = findMatchingSourceMessageIndex(message, content, sourceMessages, liveSourceCursor);
+            if (idx >= liveSourceCursor) liveSourceCursor = idx + 1;
+          }
           continue;
         }
         messages.push({
@@ -1821,7 +1830,12 @@ export function normalizeAssembleResult(
           ...(typeof message.id === "string" ? { id: message.id } : {}),
         });
       } else {
-        if (liveSourceCursor !== undefined) liveSourceCursor++;
+        // Daemon memory items may not be in sourceMessages — only advance
+        // cursor if the message is actually findable in the source transcript.
+        if (liveSourceCursor !== undefined && sourceMessages) {
+          const idx = findMatchingSourceMessageIndex(message, content, sourceMessages, liveSourceCursor);
+          if (idx >= liveSourceCursor) liveSourceCursor = idx + 1;
+        }
         if (content.trim().length > 0) {
           const sanitizedContent = sanitizeToolCallPatterns(content, {
             stripOpenClawDirectives: message.role !== "user",
@@ -2931,21 +2945,34 @@ export function buildContextEngineFactory(
       const afterTurnMessages = selectAfterTurnMessages(args.messages, args.prePromptMessageCount, logger);
       const messages = normalizeKernelMessages(afterTurnMessages, { retainOpenClawContext: true });
 
-      // Find overlap: messages already in our manifest
-      // Race condition fix: moved this INSIDE the serialized queue so each task reads fresh manifest state!
-      
+      // Sync preflight: return skipped immediately when no new messages exist,
+      // preserving the original afterTurn completion contract for idempotency.
+      const preflightManifest = manifestStore.load(sessionId, logger);
+      const preflightOverlap = manifestStore.findOverlapIndex(preflightManifest, messages);
+      const preflightNewCount = messages.slice(preflightOverlap).length;
+
+      logger.info?.(
+        `LibraVDB afterTurn sessionId=${sessionId} userId=${userId} ` +
+        `messageCount=${messages.length} newMessages=${preflightNewCount} ` +
+        `overlapIndex=${preflightOverlap} ` +
+        `prePromptMessageCount=${args.prePromptMessageCount ?? "unknown"} ` +
+        `heartbeat=${args.isHeartbeat ?? false}`,
+      );
+
+      if (preflightNewCount === 0) {
+        return { ok: true, skipped: true, reason: "no-new-messages" };
+      }
+
       enqueueAsyncIngestion(sessionId, async () => {
         try {
+          // Reload manifest inside the serialized queue so state is fresh
+          // after any preceding queued tasks have completed.
           const manifest = manifestStore.load(sessionId, logger);
           const overlapIndex = manifestStore.findOverlapIndex(manifest, messages);
           const newMessages = messages.slice(overlapIndex);
-          
+
           if (newMessages.length === 0) {
-            logger.info?.(
-              `LibraVDB afterTurn skipped sessionId=${sessionId} reason=no-new-messages ` +
-              `messageCount=${messages.length} overlapIndex=${overlapIndex}`,
-            );
-            return;
+            return; // already handled by a preceding queued task
           }
 
           // Apply token budget cap only to new messages
