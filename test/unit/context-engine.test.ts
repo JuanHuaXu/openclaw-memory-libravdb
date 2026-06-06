@@ -131,14 +131,14 @@ test("context engine direct compact declines below threshold without acquiring c
   const result = await engine.compact({
     sessionId: "s1",
     tokenBudget: 200_000,
-    currentTokenCount: 57_000,
+    currentTokenCount: 15_000,
   });
 
   assert.equal(clientCalls, 0);
   assert.equal(result.ok, true);
   assert.equal(result.compacted, false);
   assert.equal(result.reason, "below threshold");
-  assert.equal(result.result?.tokensBefore, 57_000);
+  assert.equal(result.result?.tokensBefore, 15_000);
 });
 
 test("context engine direct compact honors forced compaction below threshold", async () => {
@@ -158,7 +158,7 @@ test("context engine direct compact honors forced compaction below threshold", a
   const result = await engine.compact({
     sessionId: "s1",
     tokenBudget: 200_000,
-    currentTokenCount: 57_000,
+    currentTokenCount: 15_000,
     force: true,
   });
 
@@ -188,7 +188,7 @@ test("context engine direct compact via runtimeContext short-circuits below thre
     sessionId: "s1",
     runtimeContext: {
       tokenBudget: 200_000,
-      currentTokenCount: 57_000,
+      currentTokenCount: 15_000,
       manualCompaction: false,
     },
   });
@@ -197,7 +197,7 @@ test("context engine direct compact via runtimeContext short-circuits below thre
   assert.equal(result.ok, true);
   assert.equal(result.compacted, false);
   assert.equal(result.reason, "below threshold");
-  assert.equal(result.result?.tokensBefore, 57_000);
+  assert.equal(result.result?.tokensBefore, 15_000);
 });
 
 test("context engine direct compact via runtimeContext.manualCompaction honors forced compaction below threshold", async () => {
@@ -219,7 +219,7 @@ test("context engine direct compact via runtimeContext.manualCompaction honors f
     sessionId: "s1",
     runtimeContext: {
       tokenBudget: 200_000,
-      currentTokenCount: 57_000,
+      currentTokenCount: 15_000,
       manualCompaction: true,
     },
   });
@@ -252,7 +252,7 @@ test("context engine direct compact falls back to runtimeContext on sentinel top
     currentTokenCount: Number.NaN,
     runtimeContext: {
       tokenBudget: 200_000,
-      currentTokenCount: 57_000,
+      currentTokenCount: 15_000,
       manualCompaction: false,
     },
   });
@@ -261,7 +261,7 @@ test("context engine direct compact falls back to runtimeContext on sentinel top
   assert.equal(result.ok, true);
   assert.equal(result.compacted, false);
   assert.equal(result.reason, "below threshold");
-  assert.equal(result.result?.tokensBefore, 57_000);
+  assert.equal(result.result?.tokensBefore, 15_000);
 });
 
 function makeMessage(role: string, content: string, id?: string) {
