@@ -8,6 +8,8 @@ import fs from "node:fs";
 import { execSync } from "node:child_process";
 import { resolveIdentity } from "../../src/identity.js";
 import type { PluginConfig, SearchResult } from "../../src/types.js";
+
+type EngineWithFlush = { _flushAsyncIngestionQueues?: () => Promise<void> };
 import type { PluginRuntime } from "../../src/plugin-runtime.js";
 import type { LibravDBClient } from "../../src/libravdb-client.js";
 
@@ -422,10 +424,12 @@ test("context engine afterTurn resolves config userId and passes messages to dae
     sessionKey: "sk1",
     messages: [makeMessage("user", "hello"), makeMessage("assistant", "hi there")],
   });
-  await new Promise(r => setTimeout(r, 50));
 
+  // Sync preflight: afterTurn returns immediately with queued flag
   assert.deepEqual(result, { ok: true, queued: true });
-  await new Promise(r => setTimeout(r, 50));
+
+  // Flush async queue so queued ingestion completes before assertions
+  await (engine as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -434,6 +438,29 @@ test("context engine afterTurn resolves config userId and passes messages to dae
   assert.equal(call.params.userId, "fixed-user");
   const msgs = call.params.messages as Array<unknown>;
   assert.equal(msgs.length, 2);
+});
+
+test("context engine afterTurn does not block on daemon ingestion", async () => {
+  const client = new FakeClient();
+  const cfg: PluginConfig = { userId: "fixed-user" };
+  const engine = buildContextEngineFactory(fakeRuntime(client), cfg);
+
+  const start = Date.now();
+  const result = await engine.afterTurn({
+    sessionId: "s1-nonblock",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "hello"), makeMessage("assistant", "hi there")],
+  });
+  const elapsed = Date.now() - start;
+
+  // Must return immediately, not await daemon
+  assert.deepEqual(result, { ok: true, queued: true });
+  assert.ok(elapsed < 1000, `afterTurn should return before daemon completes (took ${elapsed}ms)`);
+
+  // Side effects complete after flush
+  await (engine as EngineWithFlush)._flushAsyncIngestionQueues?.();
+  const call = client.calls.find((c) => c.method === "afterTurnKernel");
+  assert.ok(call, "after_turn_kernel RPC was called after flush");
 });
 
 test("context engine afterTurn is idempotent when manifest has already ACKed every forwarded message", async () => {
@@ -446,24 +473,27 @@ test("context engine afterTurn is idempotent when manifest has already ACKed eve
     makeMessage("assistant", "edit failed because old text did not match"),
   ];
 
-  await engine.afterTurn({
+  // First call: should enqueue ingestion
+  const firstResult = await engine.afterTurn({
     sessionId,
     sessionKey: "sk1",
     messages,
   });
-  await new Promise(r => setTimeout(r, 50));
+  assert.deepEqual(firstResult, { ok: true, queued: true });
+  await (engine as EngineWithFlush)._flushAsyncIngestionQueues?.();
   const firstCallCount = client.calls.filter((c) => c.method === "afterTurnKernel").length;
+  assert.equal(firstCallCount, 1);
 
-  const result = await engine.afterTurn({
+  // Second call with same messages: preflight detects no new messages
+  const secondResult = await engine.afterTurn({
     sessionId,
     sessionKey: "sk1",
     messages,
   });
 
   const secondCallCount = client.calls.filter((c) => c.method === "afterTurnKernel").length;
-  assert.equal(firstCallCount, 1);
   assert.equal(secondCallCount, 1, "duplicate afterTurn should not call daemon again");
-  assert.deepEqual(result, { ok: true, skipped: true, reason: "no-new-messages" });
+  assert.deepEqual(secondResult, { ok: true, skipped: true, reason: "no-new-messages" });
 });
 
 test("context engine afterTurn strips OpenClaw untrusted metadata envelope before ingest", async () => {
@@ -477,7 +507,7 @@ test("context engine afterTurn strips OpenClaw untrusted metadata envelope befor
       makeMessage("user", timestampedOpenClawMetadataEnvelope("@User-1234 Reply with exactly PONG.")),
     ],
   });
-  await new Promise(r => setTimeout(r, 50));
+  await (engine as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -1393,7 +1423,7 @@ test("context engine afterTurn strips envelope with leading media preamble", asy
     sessionKey: "sk1",
     messages: [makeMessage("user", envelopedText)],
   });
-  await new Promise(r => setTimeout(r, 50));
+  await (engine as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -1416,7 +1446,7 @@ test("context engine afterTurn preserves content when envelope header has no fen
     sessionKey: "sk1",
     messages: [makeMessage("user", malformed)],
   });
-  await new Promise(r => setTimeout(r, 50));
+  await (engine as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -1445,7 +1475,7 @@ test("context engine afterTurn preserves content when envelope fence is unclosed
     sessionKey: "sk1",
     messages: [makeMessage("user", malformed)],
   });
-  await new Promise(r => setTimeout(r, 50));
+  await (engine as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -2094,6 +2124,8 @@ test("identity is stable across multiple sessions with the same config userId", 
   await engine.ingest({ sessionId: "session-b", sessionKey: "key-b", message: makeMessage("user", "b1") });
   await engine.afterTurn({ sessionId: "session-b", sessionKey: "key-b", messages: [makeMessage("user", "b1")] });
 
+  await (engine as EngineWithFlush)._flushAsyncIngestionQueues?.();
+
   // Every call should have the same userId
   const userIds = client.calls
     .filter((c) => c.params.userId !== undefined)
@@ -2176,6 +2208,7 @@ test("sessionId is normalized in every context engine lifecycle hook", async () 
   await engine.ingest({ sessionId, sessionKey: "sk", message: makeMessage("user", "m1") });
   await engine.assemble({ sessionId, sessionKey: "sk", messages: [makeMessage("user", "m1")], tokenBudget: 1000 });
   await engine.afterTurn({ sessionId, sessionKey: "sk", messages: [makeMessage("user", "m1")] });
+  await (engine as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   const lifecycleCalls = client.calls.filter(
     (c) => c.method === "bootstrapSessionKernel" ||
