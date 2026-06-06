@@ -113,5 +113,5 @@ test("source checklist invariants are present in host code", async () => {
   assert.doesNotMatch(indexTs, /api\.on\("shutdown"/);
   assert.doesNotMatch(indexTs, /async register\s*\(/);
   assert.match(memoryProviderTs, /availableTools/);
-  assert.match(memoryProviderTs, /context-engine assembler/);
+  assert.match(memoryProviderTs, /auto-ingested/);
 });

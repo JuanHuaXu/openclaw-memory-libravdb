@@ -71,11 +71,11 @@ test("memory prompt section guides memory tool use when memory_search is availab
   });
 
   const resultText = result.join("\n");
-  assert.ok(resultText.includes("LibraVDB persistent memory is configured"), "should include memory header");
-  assert.ok(resultText.includes("actively retrieve it"), "should guide active memory retrieval");
+  assert.ok(resultText.includes("LibraVDB Memory"), "should include memory header");
+  assert.ok(resultText.includes("once per user question"), "should guide per-question memory retrieval");
   assert.ok(resultText.includes("Call `memory_search`"), "should guide explicit recall through memory_search");
-  assert.ok(resultText.includes("fresh search"), "should prevent stale transcript reuse");
-  assert.ok(resultText.includes("compare timestamps"), "should guide earliest-memory questions through timestamps");
+  assert.ok(resultText.includes("perform a search every time"), "should prevent stale transcript reuse");
+  assert.ok(resultText.includes("auto-ingested"), "should describe auto-ingestion behavior");
   assert.ok(resultText.includes("call `memory_get`"), "should guide exact recall through memory_get");
   assert.ok(resultText.includes("vector-backed"), "should describe memory as vector-backed");
   assert.ok(!resultText.includes("recalled_memories"), "should not inject recalled memories directly");
