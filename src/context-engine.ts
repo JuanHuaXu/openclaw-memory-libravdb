@@ -340,12 +340,12 @@ function findMatchingSourceMessageIndex(
   preferredStartIndex = 0,
 ): number {
   const index = getSourceMessageIndex(sourceMessages);
-  
+
   if (message.id) {
     const byId = index.byId.get(message.id);
     if (byId !== undefined && byId >= preferredStartIndex) return byId;
   }
-  
+
   const candidates = index.byContent.get(normalizedContent);
   if (candidates) {
     // First pass: try to find a match at or after preferredStartIndex
@@ -664,7 +664,7 @@ function stripOpenClawUntrustedMetadataEnvelope(
   const strippedText = remaining.trimStart();
   const resultCore = contextLine ? `${contextLine}\n${strippedText}` : strippedText;
   const result = preamble ? `${preamble}${resultCore}` : resultCore;
-  
+
   if (cache.size >= maxOptimizationMemoCacheSize) cache.clear();
   cache.set(text, result);
   return result;
@@ -1392,17 +1392,17 @@ const isExactRecallFactMaxCacheSize = 2000;
  */
 function isExactRecallFact(text: string, token: string): boolean {
   if (!text.includes(token)) return false;
-  
+
   const cached = isExactRecallFactCache.get(text);
   if (cached !== undefined) return cached;
 
   const result = /\bmeans\b/i.test(text) && !isQuestionShapedRecallCandidate(text);
-  
+
   if (isExactRecallFactCache.size >= isExactRecallFactMaxCacheSize) {
     isExactRecallFactCache.clear();
   }
   isExactRecallFactCache.set(text, result);
-  
+
   return result;
 }
 
@@ -2289,10 +2289,10 @@ export function buildContextEngineFactory(
       .flatMap((block) => block.split(/\n+/))
       .map((block) => block.trim())
       .filter((block) => block.length > 0 && /\bmeans\b/i.test(block) && !isQuestionShapedRecallCandidate(block));
-    
+
     const combinedText = existingBlocks.length > 0 ? existingBlocks.join("\n") : "";
-    const missingTokens = combinedText.length === 0 
-      ? tokens 
+    const missingTokens = combinedText.length === 0
+      ? tokens
       : tokens.filter((token) => !combinedText.includes(token));
     if (missingTokens.length === 0) return assembled;
 
@@ -2857,12 +2857,12 @@ export function buildContextEngineFactory(
           enforced,
           args.tokenBudget,
         );
-        return ensureReplaySafeUserTurn(
-          sanitizeProviderReplayMessages(enforced, args.messages),
-          args.messages,
-          logger,
-          args.tokenBudget
-        );
+        // normalizeAssembleResult already produces fully sanitized output
+        // (live tool protocol preserved, historical tools stripped, tool-call
+        // patterns removed). A second sanitizeProviderReplayMessages pass
+        // would restart the cursor from lastUserIndex and orphan live toolCalls
+        // when an inert preamble was already dropped by the first pass.
+        return ensureReplaySafeUserTurn(enforced, args.messages, logger, args.tokenBudget);
       } catch (error) {
         logger.warn?.(
           `LibraVDB assemble failed, using budget-clamped fallback context: ${error instanceof Error ? error.message : String(error)}`,
@@ -2983,7 +2983,7 @@ export function buildContextEngineFactory(
             sessionVersion: manifest.version,
             manifestTailHash: manifest.tailHash,
           };
-          
+
           const client = await runtime.getClient();
           const currentTokenCount = normalizeCurrentTokenCount(
             typeof args.runtimeContext?.currentTokenCount === "number"
