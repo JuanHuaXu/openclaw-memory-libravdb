@@ -138,6 +138,8 @@ export interface PluginConfig {
   beforeTurnMaxMemories?: number;
   /** Minimum similarity score (0.0–1.0) for semantic search hits. Default: 0.4 */
   beforeTurnMinScore?: number;
+  /** Maximum size for context engine string memoization caches. Default: 1000 */
+  optimizationMemoCacheSize?: number;
 }
 
 export interface SearchResult {

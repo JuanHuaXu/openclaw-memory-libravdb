@@ -474,6 +474,11 @@
       },
       "logLevel": {
         "type": "string"
+      },
+      "optimizationMemoCacheSize": {
+        "type": "number",
+        "default": 1000,
+        "description": "Maximum size for context engine string memoization caches. A higher value uses slightly more memory but avoids re-evaluating regexes on very long chat histories."
       }
     }
   }

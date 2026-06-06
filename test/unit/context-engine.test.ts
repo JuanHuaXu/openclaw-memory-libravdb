@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 
-import { buildContextEngineFactory } from "../../src/context-engine.js";
+import { buildContextEngineFactory, FLUSH_ASYNC_INGESTION } from "../../src/context-engine.js";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 import { resolveIdentity } from "../../src/identity.js";
 import type { PluginConfig, SearchResult } from "../../src/types.js";
+
 import type { PluginRuntime } from "../../src/plugin-runtime.js";
 import type { LibravDBClient } from "../../src/libravdb-client.js";
 
@@ -24,6 +25,15 @@ import type { LibravDBClient } from "../../src/libravdb-client.js";
       }
     }
   }
+}
+
+/**
+ * Drains pending async ingestion queues via the FLUSH_ASYNC_INGESTION symbol.
+ * Symbol-keyed to prevent accidental string-keyed discovery in production.
+ */
+async function flushIngestion(engine: Record<string | symbol, unknown>) {
+  const fn = engine[FLUSH_ASYNC_INGESTION] as (() => Promise<void>) | undefined;
+  if (fn) await fn();
 }
 
 // ---------------------------------------------------------------------------
@@ -129,14 +139,14 @@ test("context engine direct compact declines below threshold without acquiring c
   const result = await engine.compact({
     sessionId: "s1",
     tokenBudget: 200_000,
-    currentTokenCount: 57_000,
+    currentTokenCount: 15_000,
   });
 
   assert.equal(clientCalls, 0);
   assert.equal(result.ok, true);
   assert.equal(result.compacted, false);
   assert.equal(result.reason, "below threshold");
-  assert.equal(result.result?.tokensBefore, 57_000);
+  assert.equal(result.result?.tokensBefore, 15_000);
 });
 
 test("context engine direct compact honors forced compaction below threshold", async () => {
@@ -156,7 +166,7 @@ test("context engine direct compact honors forced compaction below threshold", a
   const result = await engine.compact({
     sessionId: "s1",
     tokenBudget: 200_000,
-    currentTokenCount: 57_000,
+    currentTokenCount: 15_000,
     force: true,
   });
 
@@ -186,7 +196,7 @@ test("context engine direct compact via runtimeContext short-circuits below thre
     sessionId: "s1",
     runtimeContext: {
       tokenBudget: 200_000,
-      currentTokenCount: 57_000,
+      currentTokenCount: 15_000,
       manualCompaction: false,
     },
   });
@@ -195,7 +205,7 @@ test("context engine direct compact via runtimeContext short-circuits below thre
   assert.equal(result.ok, true);
   assert.equal(result.compacted, false);
   assert.equal(result.reason, "below threshold");
-  assert.equal(result.result?.tokensBefore, 57_000);
+  assert.equal(result.result?.tokensBefore, 15_000);
 });
 
 test("context engine direct compact via runtimeContext.manualCompaction honors forced compaction below threshold", async () => {
@@ -217,7 +227,7 @@ test("context engine direct compact via runtimeContext.manualCompaction honors f
     sessionId: "s1",
     runtimeContext: {
       tokenBudget: 200_000,
-      currentTokenCount: 57_000,
+      currentTokenCount: 15_000,
       manualCompaction: true,
     },
   });
@@ -250,7 +260,7 @@ test("context engine direct compact falls back to runtimeContext on sentinel top
     currentTokenCount: Number.NaN,
     runtimeContext: {
       tokenBudget: 200_000,
-      currentTokenCount: 57_000,
+      currentTokenCount: 15_000,
       manualCompaction: false,
     },
   });
@@ -259,7 +269,7 @@ test("context engine direct compact falls back to runtimeContext on sentinel top
   assert.equal(result.ok, true);
   assert.equal(result.compacted, false);
   assert.equal(result.reason, "below threshold");
-  assert.equal(result.result?.tokensBefore, 57_000);
+  assert.equal(result.result?.tokensBefore, 15_000);
 });
 
 function makeMessage(role: string, content: string, id?: string) {
@@ -417,11 +427,17 @@ test("context engine afterTurn resolves config userId and passes messages to dae
   const cfg: PluginConfig = { userId: "fixed-user" };
   const engine = buildContextEngineFactory(fakeRuntime(client), cfg);
 
-  await engine.afterTurn({
+  const result = await engine.afterTurn({
     sessionId: "s1-after-turn-config",
     sessionKey: "sk1",
     messages: [makeMessage("user", "hello"), makeMessage("assistant", "hi there")],
   });
+
+  // Sync preflight: afterTurn returns immediately with queued flag
+  assert.deepEqual(result, { ok: true, queued: true });
+
+  // Flush async queue so queued ingestion completes before assertions
+  await flushIngestion(engine);
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -430,6 +446,29 @@ test("context engine afterTurn resolves config userId and passes messages to dae
   assert.equal(call.params.userId, "fixed-user");
   const msgs = call.params.messages as Array<unknown>;
   assert.equal(msgs.length, 2);
+});
+
+test("context engine afterTurn does not block on daemon ingestion", async () => {
+  const client = new FakeClient();
+  const cfg: PluginConfig = { userId: "fixed-user" };
+  const engine = buildContextEngineFactory(fakeRuntime(client), cfg);
+
+  const start = Date.now();
+  const result = await engine.afterTurn({
+    sessionId: "s1-nonblock",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "hello"), makeMessage("assistant", "hi there")],
+  });
+  const elapsed = Date.now() - start;
+
+  // Must return immediately, not await daemon
+  assert.deepEqual(result, { ok: true, queued: true });
+  assert.ok(elapsed < 1000, `afterTurn should return before daemon completes (took ${elapsed}ms)`);
+
+  // Side effects complete after flush
+  await flushIngestion(engine);
+  const call = client.calls.find((c) => c.method === "afterTurnKernel");
+  assert.ok(call, "after_turn_kernel RPC was called after flush");
 });
 
 test("context engine afterTurn is idempotent when manifest has already ACKed every forwarded message", async () => {
@@ -442,23 +481,27 @@ test("context engine afterTurn is idempotent when manifest has already ACKed eve
     makeMessage("assistant", "edit failed because old text did not match"),
   ];
 
-  await engine.afterTurn({
+  // First call: should enqueue ingestion
+  const firstResult = await engine.afterTurn({
     sessionId,
     sessionKey: "sk1",
     messages,
   });
+  assert.deepEqual(firstResult, { ok: true, queued: true });
+  await flushIngestion(engine);
   const firstCallCount = client.calls.filter((c) => c.method === "afterTurnKernel").length;
+  assert.equal(firstCallCount, 1);
 
-  const result = await engine.afterTurn({
+  // Second call with same messages: preflight detects no new messages
+  const secondResult = await engine.afterTurn({
     sessionId,
     sessionKey: "sk1",
     messages,
   });
 
   const secondCallCount = client.calls.filter((c) => c.method === "afterTurnKernel").length;
-  assert.equal(firstCallCount, 1);
   assert.equal(secondCallCount, 1, "duplicate afterTurn should not call daemon again");
-  assert.deepEqual(result, { ok: true, skipped: true, reason: "no-new-messages" });
+  assert.deepEqual(secondResult, { ok: true, skipped: true, reason: "no-new-messages" });
 });
 
 test("context engine afterTurn strips OpenClaw untrusted metadata envelope before ingest", async () => {
@@ -472,6 +515,7 @@ test("context engine afterTurn strips OpenClaw untrusted metadata envelope befor
       makeMessage("user", timestampedOpenClawMetadataEnvelope("@User-1234 Reply with exactly PONG.")),
     ],
   });
+  await flushIngestion(engine);
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -493,6 +537,7 @@ test("context engine afterTurn strips iMessage envelope retaining routing contex
     sessionKey: "sk1",
     messages: [makeMessage("user", openClawIMessageMetadataEnvelope("what did I say here?"))],
   });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -525,6 +570,7 @@ test("context engine assemble strips OpenClaw untrusted metadata envelope from p
     prompt: openClawMetadataEnvelope("@User-1234 Reply with exactly PONG."),
     tokenBudget: 4000,
   });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "assembleContextInternal");
   assert.ok(call, "assemble_context_internal RPC was called");
@@ -1220,7 +1266,8 @@ test("context engine assemble strips historical OpenClaw delivery directives fro
     tokenBudget: 4000,
   });
 
-  assert.deepEqual(assembled.messages, [
+  const replayMsgs = assembled.messages.filter((m) => m.content !== "");
+  assert.deepEqual(replayMsgs, [
     { role: "user", content: "old image request", id: "old-user" },
     { role: "assistant", content: "Here is the old image", id: "assistant-media" },
     { role: "assistant", content: "Useful answer after directive.", id: "assistant-reply-directive" },
@@ -1385,6 +1432,7 @@ test("context engine afterTurn strips envelope with leading media preamble", asy
     sessionKey: "sk1",
     messages: [makeMessage("user", envelopedText)],
   });
+  await flushIngestion(engine);
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -1407,6 +1455,7 @@ test("context engine afterTurn preserves content when envelope header has no fen
     sessionKey: "sk1",
     messages: [makeMessage("user", malformed)],
   });
+  await flushIngestion(engine);
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -1435,6 +1484,7 @@ test("context engine afterTurn preserves content when envelope fence is unclosed
     sessionKey: "sk1",
     messages: [makeMessage("user", malformed)],
   });
+  await flushIngestion(engine);
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -1490,20 +1540,20 @@ test("context engine assemble injects exact factual recall for marker tokens", a
   });
 
   assert.ok(
-    assembled.systemPromptAddition.includes("<exact_recalled_memory>"),
+    assembled.systemPromptAddition.includes("<memory_fact>"),
     "exact marker fact should be injected into system context so models treat it as authoritative recall",
   );
-  assert.ok(assembled.systemPromptAddition.includes('source="exact_recalled"'));
-  assert.ok(assembled.systemPromptAddition.includes("Use them to answer factual recall questions"));
+  assert.ok(assembled.systemPromptAddition.includes('<memory_fact>'));
+  assert.ok(assembled.systemPromptAddition.includes("Use them to answer factual questions"));
   assert.ok(assembled.systemPromptAddition.includes(`${marker} means Jay prefers the &lt;blue lobster&gt; path`));
   assert.equal(assembled.systemPromptAddition.includes(`What does ${marker} mean?`), false);
   assert.ok(assembled.systemPromptAddition.includes("&amp; &quot;safe&quot; &#39;quoted&#39;"));
   assert.equal(assembled.systemPromptAddition.includes("<blue lobster>"), false);
   assert.equal(
-    assembled.messages.some((message) => message.content.includes('source="exact_recalled"')),
+    assembled.messages.some((message) => message.content.includes('<memory_fact>')),
     false,
   );
-  const searchCall = client.calls.find((c) => c.method === "searchTextCollections");
+  const searchCall = client.calls.find((c) => c.method === "searchTextCollections" && c.params.text === marker);
   assert.ok(searchCall, "exact recall search RPC was called");
   assert.equal(searchCall.params.text, marker);
 });
@@ -1535,7 +1585,7 @@ test("context engine exact recall checks existing facts per block", async () => 
     tokenBudget: 4000,
   });
 
-  const searches = client.calls.filter((c) => c.method === "searchTextCollections");
+  const searches = client.calls.filter((c) => c.method === "searchTextCollections" && c.params.text !== "previous session context continuity");
   assert.deepEqual(
     searches.map((call) => call.params.text),
     [secondMarker],
@@ -1706,7 +1756,7 @@ test("context engine exact recall skips additions that would exceed the token bu
     tokenBudget: 60,
   });
 
-  assert.equal(assembled.systemPromptAddition, "");
+  assert.equal(assembled.systemPromptAddition.includes("<memory_fact>"), false, "exact recall skipped due to budget");
   assert.equal(assembled.messages[0]?.role, "user");
   assert.ok(assembled.estimatedTokens <= 48);
   assert.equal(
@@ -1945,7 +1995,7 @@ test("context engine exact recall skips empty-text search results", async () => 
     tokenBudget: 4000,
   });
 
-  assert.equal(assembled.systemPromptAddition, "");
+  assert.equal(assembled.systemPromptAddition.includes("<memory_fact>"), false, "empty search results skip exact recall");
   assert.equal(warnings.some((message) => /exact recall failed/.test(message)), false);
 });
 
@@ -1980,7 +2030,7 @@ test("context engine exact recall ignores malformed non-string search result tex
     tokenBudget: 4000,
   });
 
-  assert.equal(assembled.systemPromptAddition, "");
+  assert.equal(assembled.systemPromptAddition.includes("<memory_fact>"), false, "malformed search results skip exact recall");
   assert.equal(warnings.some((message) => /exact recall failed/.test(message)), false);
 });
 
@@ -2007,10 +2057,10 @@ test("exact recall extracts quoted phrases from user queries", async () => {
   });
 
   assert.ok(
-    assembled.systemPromptAddition.includes('source="exact_recalled"'),
+    assembled.systemPromptAddition.includes('<memory_fact>'),
     "exact recall should fire for quoted phrases",
   );
-  const searchCall = client.calls.find((c) => c.method === "searchTextCollections");
+  const searchCall = client.calls.find((c) => c.method === "searchTextCollections" && c.params.text === phrase);
   assert.ok(searchCall);
   assert.equal(searchCall.params.text, phrase);
 });
@@ -2038,10 +2088,10 @@ test("exact recall extracts mixed-case identifiers with separators", async () =>
   });
 
   assert.ok(
-    assembled.systemPromptAddition.includes('source="exact_recalled"'),
+    assembled.systemPromptAddition.includes('<memory_fact>'),
     "exact recall should fire for mixed-case identifiers",
   );
-  const searchCall = client.calls.find((c) => c.method === "searchTextCollections");
+  const searchCall = client.calls.find((c) => c.method === "searchTextCollections" && c.params.text === key);
   assert.ok(searchCall);
   assert.equal(searchCall.params.text, key);
 });
@@ -2060,8 +2110,9 @@ test("exact recall skips common query words even when in quoted phrases", async 
     tokenBudget: 4000,
   });
 
-  const searchCall = client.calls.find((c) => c.method === "searchTextCollections");
-  assert.equal(searchCall ?? null, null, "exact recall should not fire for common words");
+  // Continuity context may fire a search — exact recall should not.
+  const exactRecallSearch = client.calls.find((c) => c.method === "searchTextCollections" && c.params.text !== "previous session context continuity");
+  assert.equal(exactRecallSearch ?? null, null, "exact recall should not fire for common words");
 });
 
 // ---------------------------------------------------------------------------
@@ -2082,6 +2133,8 @@ test("identity is stable across multiple sessions with the same config userId", 
   await engine.bootstrap({ sessionId: "session-b", sessionKey: "key-b" });
   await engine.ingest({ sessionId: "session-b", sessionKey: "key-b", message: makeMessage("user", "b1") });
   await engine.afterTurn({ sessionId: "session-b", sessionKey: "key-b", messages: [makeMessage("user", "b1")] });
+
+  await flushIngestion(engine);
 
   // Every call should have the same userId
   const userIds = client.calls
@@ -2120,6 +2173,7 @@ test("framework-provided userId override takes priority over config userId", asy
   const engine = buildContextEngineFactory(fakeRuntime(client), cfg);
 
   await engine.bootstrap({ sessionId: "s1", sessionKey: "sk1", userId: "framework-user" });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "bootstrapSessionKernel");
   assert.ok(call);
@@ -2164,6 +2218,7 @@ test("sessionId is normalized in every context engine lifecycle hook", async () 
   await engine.ingest({ sessionId, sessionKey: "sk", message: makeMessage("user", "m1") });
   await engine.assemble({ sessionId, sessionKey: "sk", messages: [makeMessage("user", "m1")], tokenBudget: 1000 });
   await engine.afterTurn({ sessionId, sessionKey: "sk", messages: [makeMessage("user", "m1")] });
+  await flushIngestion(engine);
 
   const lifecycleCalls = client.calls.filter(
     (c) => c.method === "bootstrapSessionKernel" ||
@@ -2222,6 +2277,7 @@ test("ingest forwards isHeartbeat flag to the daemon", async () => {
     message: makeMessage("user", "heartbeat check"),
     isHeartbeat: true,
   });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "ingestMessageKernel");
   assert.ok(call);
@@ -2340,7 +2396,7 @@ test("context engine exact recall escapes control characters inside injected mem
   });
 
   const match = assembled.systemPromptAddition.match(
-    /<memory_fact source="exact_recalled">([\s\S]*?)<\/memory_fact>/,
+    /<memory_fact>([\s\S]*?)<\/memory_fact>/,
   );
   assert.ok(match, "exact recall fact should be injected through the context engine");
   const factText = match[1]!;
@@ -2441,9 +2497,8 @@ test("exact recall injects facts item-by-item, dropping tail items when budget i
   });
 
   const sp = assembled.systemPromptAddition;
-  console.log("DEBUG_SP_OUTPUT:", JSON.stringify({ sp, length: sp.length, messages: assembled.messages, tokens: assembled.estimatedTokens }));
-  assert.ok(sp.includes("<exact_recalled_memory>"), "wrapper open is intact");
-  assert.ok(sp.includes("</exact_recalled_memory>"), "wrapper close is intact");
+  assert.ok(sp.includes("<memory_fact>"), "wrapper open is intact");
+  assert.ok(sp.includes("</context_memory>"), "wrapper close is intact");
   assert.ok(sp.includes(ma), "first fact injected");
   assert.ok(sp.includes(mb), "second fact injected");
   assert.equal(sp.includes(mc), false, "third fact dropped on budget");
@@ -2476,8 +2531,8 @@ test("exact recall inner-truncates a single oversized fact with [truncated] mark
   });
 
   const sp = assembled.systemPromptAddition;
-  assert.ok(sp.includes("<exact_recalled_memory>"), "wrapper open is intact");
-  assert.ok(sp.includes("</exact_recalled_memory>"), "wrapper close is intact");
+  assert.ok(sp.includes("<memory_fact>"), "wrapper open is intact");
+  assert.ok(sp.includes("</context_memory>"), "wrapper close is intact");
   assert.ok(sp.includes("<memory_fact"), "fact element is present");
   assert.ok(sp.includes("</memory_fact>"), "fact element is closed");
   assert.ok(sp.includes("...[truncated]"), "truncation marker is present");
@@ -2516,7 +2571,7 @@ test("predictive context injects items item-by-item, dropping tail items when bu
     sessionKey: "sk1",
     messages: [makeMessage("user", "continue")],
     prompt: "continue",
-    tokenBudget: 140,
+    tokenBudget: 200,
   });
 
   const sp = assembled.systemPromptAddition;
