@@ -417,11 +417,15 @@ test("context engine afterTurn resolves config userId and passes messages to dae
   const cfg: PluginConfig = { userId: "fixed-user" };
   const engine = buildContextEngineFactory(fakeRuntime(client), cfg);
 
-  await engine.afterTurn({
+  const result = await engine.afterTurn({
     sessionId: "s1-after-turn-config",
     sessionKey: "sk1",
     messages: [makeMessage("user", "hello"), makeMessage("assistant", "hi there")],
   });
+  await new Promise(r => setTimeout(r, 50));
+
+  assert.deepEqual(result, { ok: true, queued: true });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -447,6 +451,7 @@ test("context engine afterTurn is idempotent when manifest has already ACKed eve
     sessionKey: "sk1",
     messages,
   });
+  await new Promise(r => setTimeout(r, 50));
   const firstCallCount = client.calls.filter((c) => c.method === "afterTurnKernel").length;
 
   const result = await engine.afterTurn({
@@ -472,6 +477,7 @@ test("context engine afterTurn strips OpenClaw untrusted metadata envelope befor
       makeMessage("user", timestampedOpenClawMetadataEnvelope("@User-1234 Reply with exactly PONG.")),
     ],
   });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -493,6 +499,7 @@ test("context engine afterTurn strips iMessage envelope retaining routing contex
     sessionKey: "sk1",
     messages: [makeMessage("user", openClawIMessageMetadataEnvelope("what did I say here?"))],
   });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -525,6 +532,7 @@ test("context engine assemble strips OpenClaw untrusted metadata envelope from p
     prompt: openClawMetadataEnvelope("@User-1234 Reply with exactly PONG."),
     tokenBudget: 4000,
   });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "assembleContextInternal");
   assert.ok(call, "assemble_context_internal RPC was called");
@@ -1385,6 +1393,7 @@ test("context engine afterTurn strips envelope with leading media preamble", asy
     sessionKey: "sk1",
     messages: [makeMessage("user", envelopedText)],
   });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -1407,6 +1416,7 @@ test("context engine afterTurn preserves content when envelope header has no fen
     sessionKey: "sk1",
     messages: [makeMessage("user", malformed)],
   });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -1435,6 +1445,7 @@ test("context engine afterTurn preserves content when envelope fence is unclosed
     sessionKey: "sk1",
     messages: [makeMessage("user", malformed)],
   });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "afterTurnKernel");
   assert.ok(call, "after_turn_kernel RPC was called");
@@ -2120,6 +2131,7 @@ test("framework-provided userId override takes priority over config userId", asy
   const engine = buildContextEngineFactory(fakeRuntime(client), cfg);
 
   await engine.bootstrap({ sessionId: "s1", sessionKey: "sk1", userId: "framework-user" });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "bootstrapSessionKernel");
   assert.ok(call);
@@ -2222,6 +2234,7 @@ test("ingest forwards isHeartbeat flag to the daemon", async () => {
     message: makeMessage("user", "heartbeat check"),
     isHeartbeat: true,
   });
+  await new Promise(r => setTimeout(r, 50));
 
   const call = client.calls.find((c) => c.method === "ingestMessageKernel");
   assert.ok(call);
