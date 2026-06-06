@@ -616,9 +616,10 @@ function normalizeKernelContent(content: unknown, options: KernelContentNormaliz
 
 /**
  * Symbol-keyed hook that drains all pending async ingestion queues.
- * Tests import this symbol to access the drain function; production
- * code has no way to discover it without the symbol reference, which
- * is not re-exported from the public API surface.
+ * Tests import this symbol to access the drain function. Using a
+ * Symbol rather than a string-keyed method prevents accidental
+ * discovery via property enumeration or duck-typing — production
+ * code must explicitly import the symbol to call the hook.
  */
 export const FLUSH_ASYNC_INGESTION = Symbol("flushAsyncIngestion");
 

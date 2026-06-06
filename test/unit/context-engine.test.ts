@@ -29,7 +29,7 @@ import type { LibravDBClient } from "../../src/libravdb-client.js";
 
 /**
  * Drains pending async ingestion queues via the FLUSH_ASYNC_INGESTION symbol.
- * Production code cannot discover this hook without the symbol reference.
+ * Symbol-keyed to prevent accidental string-keyed discovery in production.
  */
 async function flushIngestion(engine: Record<string | symbol, unknown>) {
   const fn = engine[FLUSH_ASYNC_INGESTION] as (() => Promise<void>) | undefined;
