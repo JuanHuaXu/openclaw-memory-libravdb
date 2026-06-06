@@ -129,21 +129,12 @@ function normalizeCompactResult(
   }
 
   const details = {
-    clustersFormed:
-      typeof response?.clustersFormed === "number" ? response.clustersFormed : undefined,
-    clustersDeclined:
-      typeof response?.clustersDeclined === "number" ? response.clustersDeclined : undefined,
-    turnsRemoved: typeof response?.turnsRemoved === "number" ? response.turnsRemoved : undefined,
-    summaryMethod:
-      typeof response?.summaryMethod === "string" && response.summaryMethod.length > 0
-        ? response.summaryMethod
-        : undefined,
-    meanConfidence:
-      typeof response?.meanConfidence === "number" ? response.meanConfidence : undefined,
-    summaryText:
-      typeof response?.summaryText === "string" && response.summaryText.length > 0
-        ? response.summaryText
-        : undefined,
+    ...(typeof response?.clustersFormed === "number" ? { clustersFormed: response.clustersFormed } : {}),
+    ...(typeof response?.clustersDeclined === "number" ? { clustersDeclined: response.clustersDeclined } : {}),
+    ...(typeof response?.turnsRemoved === "number" ? { turnsRemoved: response.turnsRemoved } : {}),
+    ...(typeof response?.summaryMethod === "string" && response.summaryMethod.length > 0 ? { summaryMethod: response.summaryMethod } : {}),
+    ...(typeof response?.meanConfidence === "number" ? { meanConfidence: response.meanConfidence } : {}),
+    ...(typeof response?.summaryText === "string" && response.summaryText.length > 0 ? { summaryText: response.summaryText } : {}),
     ...(lastCompactedTurn != null ? { lastCompactedTurn: lastCompactedTurn.toString() } : {}),
     ...(tokenAccumulatorAfter != null ? { tokenAccumulatorAfter } : {}),
     ...(totalTurns != null ? { totalTurns: totalTurns.toString() } : {}),
@@ -1364,15 +1355,26 @@ function extractExactRecallTokens(text: string): string[] {
   return Array.from(tokens).slice(0, EXACT_RECALL_MAX_TOKENS);
 }
 
+const isExactRecallFactCache = new Map<string, boolean>();
+const isExactRecallFactMaxCacheSize = 2000;
+
 /**
  * Checks if text is an exact recall fact containing the token.
  */
 function isExactRecallFact(text: string, token: string): boolean {
-  return (
-    text.includes(token) &&
-    /\bmeans\b/i.test(text) &&
-    !isQuestionShapedRecallCandidate(text)
-  );
+  if (!text.includes(token)) return false;
+  
+  const cached = isExactRecallFactCache.get(text);
+  if (cached !== undefined) return cached;
+
+  const result = /\bmeans\b/i.test(text) && !isQuestionShapedRecallCandidate(text);
+  
+  if (isExactRecallFactCache.size >= isExactRecallFactMaxCacheSize) {
+    isExactRecallFactCache.clear();
+  }
+  isExactRecallFactCache.set(text, result);
+  
+  return result;
 }
 
 /**
@@ -2888,49 +2890,42 @@ export function buildContextEngineFactory(
         sessionKey: args.sessionKey,
       });
 
-      // Load manifest and normalize messages in parallel
-      const manifest = manifestStore.load(sessionId, logger);
       const afterTurnMessages = selectAfterTurnMessages(args.messages, args.prePromptMessageCount, logger);
       const messages = normalizeKernelMessages(afterTurnMessages, { retainOpenClawContext: true });
 
       // Find overlap: messages already in our manifest
-      const overlapIndex = manifestStore.findOverlapIndex(manifest, messages);
-      const newMessages = messages.slice(overlapIndex);
-
-      // Apply token budget cap only to new messages
-      const ingestMessages = boundAfterTurnMessagesForIngest(newMessages, logger, sessionId);
-
-      const startIndex = manifestStore.deriveStartingIndex(manifest, args.prePromptMessageCount);
-      const cursor = {
-        lastProcessedIndex: startIndex > 0 ? startIndex - 1 : 0,
-        sessionVersion: manifest.version,
-        manifestTailHash: manifest.tailHash,
-      };
-
-      logger.info?.(
-        `LibraVDB afterTurn sessionId=${sessionId} userId=${userId} ` +
-        `messageCount=${messages.length} newMessages=${newMessages.length} ` +
-        `overlapIndex=${overlapIndex} startIndex=${startIndex} ` +
-        `prePromptMessageCount=${args.prePromptMessageCount ?? "unknown"} ` +
-        `heartbeat=${args.isHeartbeat ?? false}`,
-      );
-
-      if (newMessages.length === 0) {
-        logger.info?.(
-          `LibraVDB afterTurn skipped sessionId=${sessionId} reason=no-new-messages ` +
-          `messageCount=${messages.length} overlapIndex=${overlapIndex}`,
-        );
-        return { ok: true, skipped: true, reason: "no-new-messages" };
-      }
-
+      // Race condition fix: moved this INSIDE the serialized queue so each task reads fresh manifest state!
+      
       enqueueAsyncIngestion(sessionId, async () => {
         try {
+          const manifest = manifestStore.load(sessionId, logger);
+          const overlapIndex = manifestStore.findOverlapIndex(manifest, messages);
+          const newMessages = messages.slice(overlapIndex);
+          
+          if (newMessages.length === 0) {
+            logger.info?.(
+              `LibraVDB afterTurn skipped sessionId=${sessionId} reason=no-new-messages ` +
+              `messageCount=${messages.length} overlapIndex=${overlapIndex}`,
+            );
+            return;
+          }
+
+          // Apply token budget cap only to new messages
+          const ingestMessages = boundAfterTurnMessagesForIngest(newMessages, logger, sessionId);
+          const startIndex = manifestStore.deriveStartingIndex(manifest, args.prePromptMessageCount);
+          const cursor = {
+            lastProcessedIndex: startIndex > 0 ? startIndex - 1 : 0,
+            sessionVersion: manifest.version,
+            manifestTailHash: manifest.tailHash,
+          };
+          
           const client = await runtime.getClient();
           const currentTokenCount = normalizeCurrentTokenCount(
             typeof args.runtimeContext?.currentTokenCount === "number"
               ? args.runtimeContext.currentTokenCount
               : undefined,
           );
+
           const result = await client.afterTurnKernel({
             sessionId,
             sessionKey: args.sessionKey,
@@ -3016,6 +3011,9 @@ export function buildContextEngineFactory(
       });
 
       return { ok: true, queued: true };
+    },
+    async _flushAsyncIngestionQueues() {
+      await Promise.all(Array.from(asyncIngestionQueues.values()));
     },
     async prepareSubagentSpawn(params: {
       parentSessionKey: string;
