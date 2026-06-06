@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildContextEngineFactory as createContextEngineFactory } from "../../src/context-engine.js";
+import { buildContextEngineFactory as createContextEngineFactory, FLUSH_ASYNC_INGESTION } from "../../src/context-engine.js";
 import { createMemoryLogger } from "../helpers/logger.js";
 import type { LoggerLike, PluginConfig, SearchResult } from "../../src/types.js";
 import fs from "node:fs";
@@ -18,7 +18,14 @@ if (fs.existsSync(MANIFEST_DIR)) {
   }
 }
 
-type EngineWithFlush = { _flushAsyncIngestionQueues?: () => Promise<void> };
+/**
+ * Drains pending async ingestion queues via the FLUSH_ASYNC_INGESTION symbol.
+ * Production code cannot discover this hook without the symbol reference.
+ */
+async function flushIngestion(engine: Record<string | symbol, unknown>) {
+  const fn = engine[FLUSH_ASYNC_INGESTION] as (() => Promise<void>) | undefined;
+  if (fn) await fn();
+}
 
 function uniqueSessionId(label: string): string {
   return `test-session-${label}-${process.pid}`;
@@ -551,7 +558,7 @@ test("afterTurn forwards only post-prompt messages and strips prePromptMessageCo
     prePromptMessageCount: 1,
     isHeartbeat: false,
   });
-  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
+  await flushIngestion(context);
 
   const params = rpc.getLastCall("after_turn_kernel");
   assert.ok(params, "Expected after_turn_kernel to be called");
@@ -581,7 +588,7 @@ test("afterTurn forwards latest message when prePromptMessageCount consumes all 
     prePromptMessageCount: 1,
     isHeartbeat: false,
   });
-  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
+  await flushIngestion(context);
 
   const params = rpc.getLastCall("after_turn_kernel");
   assert.ok(params, "Expected after_turn_kernel to be called");
@@ -611,7 +618,7 @@ test("afterTurn forwards all messages when prePromptMessageCount is absent", asy
     messages: mockMessages,
     isHeartbeat: false,
   });
-  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
+  await flushIngestion(context);
 
   const params = rpc.getLastCall("after_turn_kernel");
   assert.ok(params, "Expected after_turn_kernel to be called");
@@ -645,7 +652,7 @@ test("afterTurn triggers predictive compaction from runtimeContext currentTokenC
     tokenBudget: 3000,
     runtimeContext: { currentTokenCount: 2800 },
   });
-  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
+  await flushIngestion(context);
 
   const compactParams = rpc.getLastCall("compact_session");
   assert.ok(compactParams, "Expected compact_session to be called");
@@ -676,7 +683,7 @@ test("afterTurn does not trigger predictive compaction without authoritative cur
     tokenBudget: 3000,
     runtimeContext: { currentTokenCount: Number.NaN },
   });
-  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
+  await flushIngestion(context);
 
   assert.equal(rpc.getLastCall("compact_session"), null);
 });
@@ -702,7 +709,7 @@ test("afterTurn triggers predictive compaction from oversized forwarded messages
     tokenBudget: 3000,
     runtimeContext: { currentTokenCount: Number.NaN },
   });
-  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
+  await flushIngestion(context);
 
   const compactParams = rpc.getLastCall("compact_session");
   assert.ok(compactParams, "Expected compact_session to be called");

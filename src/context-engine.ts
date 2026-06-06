@@ -614,6 +614,14 @@ function normalizeKernelContent(content: unknown, options: KernelContentNormaliz
   });
 }
 
+/**
+ * Symbol-keyed hook that drains all pending async ingestion queues.
+ * Tests import this symbol to access the drain function; production
+ * code has no way to discover it without the symbol reference, which
+ * is not re-exported from the public API surface.
+ */
+export const FLUSH_ASYNC_INGESTION = Symbol("flushAsyncIngestion");
+
 let maxOptimizationMemoCacheSize = 1000;
 const metadataEnvelopeCache = new Map<string, string>();
 const metadataEnvelopeRetainCache = new Map<string, string>();
@@ -626,15 +634,18 @@ export function setOptimizationMemoCacheSize(size: number) {
  * Evicts the oldest half of entries from a Map when it exceeds maxSize.
  * Uses insertion-order iteration (guaranteed by ES spec) to drop the
  * earliest-inserted entries, avoiding bursty cache clearance at the boundary.
+ *
+ * The guard `map.size < maxSize` guarantees `dropCount <= map.size`, so the
+ * iterator will never exhaust early — we iterate exactly `dropCount` times.
+ * No `done` check is needed; all code paths that call this are synchronous
+ * and single-threaded (no concurrent Map mutation).
  */
 function evictOldestHalf(map: Map<unknown, unknown>, maxSize: number): void {
   if (map.size < maxSize) return;
   const dropCount = Math.ceil(map.size / 2);
   const keys = map.keys();
   for (let i = 0; i < dropCount; i++) {
-    const { value, done } = keys.next();
-    if (done) break;
-    map.delete(value);
+    map.delete(keys.next().value);
   }
 }
 
@@ -3096,12 +3107,7 @@ export function buildContextEngineFactory(
 
       return { ok: true, queued: true };
     },
-    /**
-     * @internal Test-only hook: drains all pending async ingestion queues
-     * so assertions can inspect daemon RPC side effects deterministically.
-     * Production callers should not depend on this.
-     */
-    async _flushAsyncIngestionQueues() {
+    [FLUSH_ASYNC_INGESTION]: async () => {
       await Promise.all(Array.from(asyncIngestionQueues.values()));
     },
     async prepareSubagentSpawn(params: {
@@ -3150,7 +3156,26 @@ export function buildContextEngineFactory(
     },
     async dispose() {
       // Drain in-flight ingestion so writes are not lost during shutdown.
-      await Promise.all(Array.from(asyncIngestionQueues.values()));
+      // Apply a timeout so a stuck daemon doesn't block process exit.
+      const DISPOSE_DRAIN_TIMEOUT_MS = 5000;
+      const pending = Array.from(asyncIngestionQueues.values());
+      if (pending.length > 0) {
+        try {
+          await Promise.race([
+            Promise.all(pending),
+            new Promise<void>((resolve) => setTimeout(resolve, DISPOSE_DRAIN_TIMEOUT_MS)),
+          ]);
+        } catch {
+          // Swallow — drain errors are already logged inside queued tasks.
+        }
+        const remaining = Array.from(asyncIngestionQueues.values()).length;
+        if (remaining > 0) {
+          logger.warn?.(
+            `LibraVDB dispose timed out after ${DISPOSE_DRAIN_TIMEOUT_MS}ms ` +
+            `with ${remaining} queued ingestion task(s) still pending — clearing anyway`,
+          );
+        }
+      }
       predictiveContextCache.clear();
       postToolRecallCache.clear();
       asyncIngestionQueues.clear();
