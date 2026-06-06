@@ -2996,7 +2996,6 @@ export function buildContextEngineFactory(
             sessionKey: args.sessionKey,
             userId,
             messages: ingestMessages,
-            prePromptMessageCount: args.prePromptMessageCount,
             isHeartbeat: args.isHeartbeat,
             cursor,
           } as unknown as Parameters<typeof client.afterTurnKernel>[0]);
@@ -3125,6 +3124,8 @@ export function buildContextEngineFactory(
       subagentBudgets.delete(key);
     },
     async dispose() {
+      // Drain in-flight ingestion so writes are not lost during shutdown.
+      await Promise.all(Array.from(asyncIngestionQueues.values()));
       predictiveContextCache.clear();
       postToolRecallCache.clear();
       asyncIngestionQueues.clear();

@@ -4,6 +4,23 @@ import assert from "node:assert/strict";
 import { buildContextEngineFactory as createContextEngineFactory } from "../../src/context-engine.js";
 import { createMemoryLogger } from "../helpers/logger.js";
 import type { LoggerLike, PluginConfig, SearchResult } from "../../src/types.js";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+
+// Clean stale manifests from previous test runs before any test executes.
+const MANIFEST_DIR = path.join(os.homedir(), ".openclaw", "libravdb-manifests");
+for (const entry of fs.readdirSync(MANIFEST_DIR, { withFileTypes: true }) ?? []) {
+  if (entry.isFile() && entry.name.startsWith("test-session")) {
+    fs.unlinkSync(path.join(MANIFEST_DIR, entry.name));
+  }
+}
+
+type EngineWithFlush = { _flushAsyncIngestionQueues?: () => Promise<void> };
+
+function uniqueSessionId(label: string): string {
+  return `test-session-${label}-${process.pid}`;
+}
 
 const NOOP_LOGGER: LoggerLike = {
   error() {},
@@ -525,21 +542,24 @@ test("afterTurn forwards only post-prompt messages and strips prePromptMessageCo
     { role: "assistant", content: "m2" },
   ];
 
+  const sid = uniqueSessionId("at1");
   await context.afterTurn({
-    sessionId: "test-session",
+    sessionId: sid,
     userId: "test-user",
     messages: mockMessages,
     prePromptMessageCount: 1,
     isHeartbeat: false,
   });
+  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   const params = rpc.getLastCall("after_turn_kernel");
   assert.ok(params, "Expected after_turn_kernel to be called");
-  assert.equal(params.sessionId, "test-session");
+  assert.equal(params.sessionId, sid);
   assert.equal(params.userId, "test-user");
   assert.equal("prePromptMessageCount" in params, false, "prePromptMessageCount must not leak to daemon");
   assert.equal(params.isHeartbeat, false);
-  assert.deepEqual(params.messages, [mockMessages[1]]);
+  const msgs = (params.messages as any[]).map(({ id, ...rest }: any) => rest);
+  assert.deepEqual(msgs, [mockMessages[1]]);
 });
 
 test("afterTurn forwards latest message when prePromptMessageCount consumes all messages", async () => {
@@ -554,17 +574,19 @@ test("afterTurn forwards latest message when prePromptMessageCount consumes all 
   ];
 
   await context.afterTurn({
-    sessionId: "test-session",
+    sessionId: uniqueSessionId("at2"),
     userId: "test-user",
     messages: mockMessages,
     prePromptMessageCount: 1,
     isHeartbeat: false,
   });
+  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   const params = rpc.getLastCall("after_turn_kernel");
   assert.ok(params, "Expected after_turn_kernel to be called");
   assert.equal("prePromptMessageCount" in params, false, "prePromptMessageCount must not leak to daemon");
-  assert.deepEqual(params.messages, mockMessages);
+  const msgs = (params.messages as any[]).map(({ id, ...rest }: any) => rest);
+  assert.deepEqual(msgs, mockMessages);
   assert.ok(
     logger.warns.some((message) => /forwarding latest message for compatibility/.test(message)),
     "boundary fallback should emit an operator warning",
@@ -583,19 +605,21 @@ test("afterTurn forwards all messages when prePromptMessageCount is absent", asy
   ];
 
   await context.afterTurn({
-    sessionId: "test-session",
+    sessionId: uniqueSessionId("at3"),
     userId: "test-user",
     messages: mockMessages,
     isHeartbeat: false,
   });
+  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   const params = rpc.getLastCall("after_turn_kernel");
   assert.ok(params, "Expected after_turn_kernel to be called");
-  assert.equal(params.sessionId, "test-session");
+  assert.equal(params.sessionId, uniqueSessionId("at3"));
   assert.equal(params.userId, "test-user");
   assert.equal("prePromptMessageCount" in params, false, "prePromptMessageCount must not leak to daemon");
   assert.equal(params.isHeartbeat, false);
-  assert.deepEqual(params.messages, mockMessages);
+  const msgs = (params.messages as any[]).map(({ id, ...rest }: any) => rest);
+  assert.deepEqual(msgs, mockMessages);
 });
 
 test("afterTurn triggers predictive compaction from runtimeContext currentTokenCount", async () => {
@@ -610,7 +634,7 @@ test("afterTurn triggers predictive compaction from runtimeContext currentTokenC
   const context = buildContextEngineFactory(async () => rpc as never, cfg, logger);
 
   await context.afterTurn({
-    sessionId: "test-session",
+    sessionId: uniqueSessionId("at4"),
     userId: "test-user",
     messages: [
       { role: "user", content: "remember this" },
@@ -620,6 +644,7 @@ test("afterTurn triggers predictive compaction from runtimeContext currentTokenC
     tokenBudget: 1000,
     runtimeContext: { currentTokenCount: 900 },
   });
+  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   assert.deepEqual(
     rpc.calls.map((call) => call.method),
@@ -645,7 +670,7 @@ test("afterTurn does not trigger predictive compaction without authoritative cur
   const context = buildContextEngineFactory(async () => rpc as never, cfg);
 
   await context.afterTurn({
-    sessionId: "test-session",
+    sessionId: uniqueSessionId("at5"),
     userId: "test-user",
     messages: [
       { role: "user", content: "remember this" },
@@ -655,6 +680,7 @@ test("afterTurn does not trigger predictive compaction without authoritative cur
     tokenBudget: 1000,
     runtimeContext: { currentTokenCount: Number.NaN },
   });
+  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   assert.deepEqual(
     rpc.calls.map((call) => call.method),
@@ -674,7 +700,7 @@ test("afterTurn triggers predictive compaction from oversized forwarded messages
   const context = buildContextEngineFactory(async () => rpc as never, cfg);
 
   await context.afterTurn({
-    sessionId: "test-session",
+    sessionId: uniqueSessionId("at6"),
     userId: "test-user",
     messages: [
       { role: "user", content: "please run the tool" },
@@ -684,6 +710,7 @@ test("afterTurn triggers predictive compaction from oversized forwarded messages
     tokenBudget: 1000,
     runtimeContext: { currentTokenCount: Number.NaN },
   });
+  await (context as EngineWithFlush)._flushAsyncIngestionQueues?.();
 
   assert.deepEqual(
     rpc.calls.map((call) => call.method),
