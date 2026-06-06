@@ -6,11 +6,6 @@ import path from "node:path";
 
 import { createMarkdownIngestionHandle, type FsDirentLike } from "../../src/markdown-ingest.js";
 
-type FsDirentLike = {
-  name: string;
-  isDirectory(): boolean;
-  isFile(): boolean;
-};
 
 class FakeRpcClient {
   calls: Array<{ method: string; params: unknown }> = [];
