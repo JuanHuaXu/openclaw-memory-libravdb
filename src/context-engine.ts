@@ -372,13 +372,17 @@ function hasToolProtocolBeforeSinceLastUser(
 
 // Live tool protocol must come back from daemon replay in source order.
 // Out-of-order or already-consumed fragments are unsafe to restore or demote.
-function findCurrentTurnToolProtocolSourceIndex(
+function findLiveToolSourceInCurrentTurn(
   message: { role: string; content?: unknown; id?: string; [key: string]: unknown },
   normalizedContent: string,
   sourceMessages: OpenClawCompatibleMessage[] | undefined,
   preferredStartIndex?: number,
 ): number {
   if (!sourceMessages) return -1;
+  // Daemon flattens structured toolCall blocks into [tool:name] text, which
+  // no longer triggers hasKernelToolCallBlock. Allow assistant messages through
+  // so flattened tool calls reach source-message validation. Plain assistant
+  // text responses are filtered out by subsequent source-message checks.
   if (!isToolResultRole(message.role) && message.role !== "assistant" && !hasKernelToolCallBlock(message.content)) {
     return -1;
   }
@@ -433,7 +437,7 @@ function isHistoricalToolDerivedAssistantReply(
   return hasToolProtocolBeforeSinceLastUser(sourceMessages!, sourceIndex);
 }
 
-function findLiveToolProtocolSourceMessage(
+function consumeLiveToolAtCursor(
   message: { role: string; content?: unknown; id?: string; [key: string]: unknown },
   normalizedContent: string,
   sourceMessages: OpenClawCompatibleMessage[] | undefined,
@@ -449,7 +453,7 @@ function findLiveToolProtocolSourceMessage(
   const searchStartIndex = preferredStartIndex === undefined
     ? lastUserIndex + 1
     : Math.max(lastUserIndex + 1, preferredStartIndex);
-  const sourceIndex = findCurrentTurnToolProtocolSourceIndex(
+  const sourceIndex = findLiveToolSourceInCurrentTurn(
     message,
     normalizedContent,
     sourceMessages,
@@ -1067,19 +1071,9 @@ function demoteDaemonAuthoredContextBlocks(text: string): string {
 function sanitizeProviderReplayMessage(
   message: OpenClawCompatibleMessage,
   sourceMessages?: OpenClawCompatibleMessage[],
-  preferredStartIndex?: number,
 ): OpenClawCompatibleMessage | null {
   const content = normalizeKernelContent(message.content);
-  const liveToolProtocolSource = findLiveToolProtocolSourceMessage(
-    message,
-    content,
-    sourceMessages,
-    preferredStartIndex,
-  );
-  if (liveToolProtocolSource) {
-    return preserveLiveToolProtocolMessage(liveToolProtocolSource.message);
-  }
-  if (findCurrentTurnToolProtocolSourceIndex(message, content, sourceMessages) >= 0) {
+  if (findLiveToolSourceInCurrentTurn(message, content, sourceMessages) >= 0) {
     return null;
   }
 
@@ -1116,7 +1110,7 @@ function sanitizeProviderReplayMessages(
   let liveSourceCursor = sourceMessages ? findLastUserMessageIndex(sourceMessages) + 1 : undefined;
   const messages = result.messages.flatMap((message) => {
     const content = normalizeKernelContent(message.content);
-    const liveToolProtocolSource = findLiveToolProtocolSourceMessage(
+    const liveToolProtocolSource = consumeLiveToolAtCursor(
       message,
       content,
       sourceMessages,
@@ -1126,7 +1120,7 @@ function sanitizeProviderReplayMessages(
       liveSourceCursor = liveToolProtocolSource.index + 1;
       return [preserveLiveToolProtocolMessage(liveToolProtocolSource.message)];
     }
-    const sanitized = sanitizeProviderReplayMessage(message, sourceMessages, liveSourceCursor);
+    const sanitized = sanitizeProviderReplayMessage(message, sourceMessages);
     if (!sanitized) return [];
     return [sanitized];
   });
@@ -1647,7 +1641,7 @@ export function normalizeAssembleResult(
         isRealTranscript = message.role === "user" || message.role === "assistant";
       }
 
-      const liveToolProtocolSource = findLiveToolProtocolSourceMessage(
+      const liveToolProtocolSource = consumeLiveToolAtCursor(
         message,
         content,
         sourceMessages,
@@ -1656,7 +1650,7 @@ export function normalizeAssembleResult(
       if (liveToolProtocolSource) {
         messages.push(preserveLiveToolProtocolMessage(liveToolProtocolSource.message));
         liveSourceCursor = liveToolProtocolSource.index + 1;
-      } else if (findCurrentTurnToolProtocolSourceIndex(message, content, sourceMessages) >= 0) {
+      } else if (findLiveToolSourceInCurrentTurn(message, content, sourceMessages) >= 0) {
         continue;
       } else if (isRealTranscript && !historicalToolSource && isProviderReplayRole(message.role)) {
         if (isHistoricalToolDerivedAssistantReply(message, content, sourceMessages)) {
