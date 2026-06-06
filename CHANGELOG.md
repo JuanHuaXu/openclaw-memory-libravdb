@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.9.0 — 2026-06-06
+
+**Contributor:** xDarkicex — [PR #329](https://github.com/xDarkicex/openclaw-memory-libravdb/pull/329)
+**Signed off by:** xDarkicex
+
+### Added
+- `optimizationMemoCacheSize` config option (default 1000) to bound string memoization caches.
+- `FLUSH_ASYNC_INGESTION` Symbol-keyed test hook — drains queued ingestion deterministically without being discoverable via string enumeration in production.
+- `memory_describe`, `memory_expand`, and `memory_grep` recall tools now register in all runtime modes (previously gated behind memory slot ownership). Enables recall hierarchy on slot-unset deployments.
+- `before_prompt_build` hook captures trigger type for BeforeTurnKernel gating (skips semantic retrieval on automated triggers like heartbeat/cron).
+- `setOptimizationMemoCacheSize(size)` exported function for runtime cache tuning.
+
+### Changed
+- **Memoization layer:** `normalizedContentCache` (WeakMap), `metadataEnvelopeCache`, and `toolCallSanitizeCache` (Maps with bounded eviction) eliminate repeated regex + JSON parse + normalize ops on the hot path. Amortized O(1) per call where cache hits occur.
+- **O(1) source lookups:** `SourceIndex` (WeakMap-keyed by sourceMessages array) with lazy `byContent`/`byId` Maps replaces O(N) linear scans in `findMatchingSourceMessageIndex`. Rebuilds only on array growth.
+- **Async ingestion:** `afterTurn` returns `{ ok: true, queued: true }` immediately. Heavy work (daemon RPC, manifest reconciliation, predictive compaction, embedding prewarm) executes on a serial per-session promise chain off the critical path. Sync preflight returns `{ skipped: true }` when no new messages exist.
+- **Post-tool continuation cache:** when `assemble` detects live tool protocol after the last user message, it bypasses `BeforeTurnKernel` + `assembleContextInternal` + Exact Recall RPCs and reuses the cached system prompt addition. Gated by `hasLiveToolProtocolAfterLastUser()`.
+- **Parallel exact recall:** missing-token RPCs now use `Promise.all` instead of sequential `for...of`.
+- **Duplicate sanitization removed:** `sanitizeProviderReplayMessages` no longer called on the happy path — `normalizeAssembleResult` already produces fully sanitized output.
+- **`dispose()` drain timeout:** 5-second `Promise.race` prevents indefinite shutdown blocking on a stuck daemon. Warns when tasks remain after timeout.
+- **Memory prompt rewritten:** simpler header (`## LibraVDB Memory`), per-question search guidance, recall hierarchy docs, removed stale timestamp-comparison and "actively retrieve" guidance.
+
+### Fixed
+- Cursor auto-advance now uses precise `findMatchingSourceMessageIndex` lookups when messages are dropped — prevents inert assistant preambles from stalling the live tool cursor and orphaning downstream tool protocol.
+- `SourceIndex` detects in-place array mutation via length fingerprint and rebuilds lazily (O(N) only when array genuinely grows).
+- Manifest reloaded inside the queued async task (not captured at preflight time) to prevent stale snapshot races across sequential queued ingestion tasks.
+- `asyncIngestionQueues` entries self-delete on settle; `postToolRecallCache` evicts oldest entry at 100; all string caches use `evictOldestHalf` (proportional insertion-order eviction) to avoid bursty clearance.
+- 4 pre-existing test failures fixed: stale prompt assertions in `memory-provider.test.ts`, stale tool/hook arrays in `slot-conflict.test.ts`, and stale invariant check in `checklist-validation.test.ts`.
+
+---
+
 ## v1.8.10 — 2026-06-03
 
 **Contributor:** xDarkicex — [PR #304](https://github.com/xDarkicex/openclaw-memory-libravdb/pull/304)
