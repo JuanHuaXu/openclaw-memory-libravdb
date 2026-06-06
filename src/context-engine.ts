@@ -278,6 +278,10 @@ const postToolRecallCache = new Map<string, PostToolContextCache>();
 
 function enqueueAsyncIngestion(sessionId: string, task: () => Promise<void>): void {
   const previous = asyncIngestionQueues.get(sessionId) ?? Promise.resolve();
+  // The task body wraps all work in try/catch with logger.warn, so any
+  // rejection is already logged. This outer catch handles the edge case of
+  // a synchronously-thrown error during task invocation (not promise
+  // rejection) and prevents an unhandled rejection from surfacing.
   const next = previous.then(task).catch(() => {
     // Errors are already caught and logged inside the task.
   }).finally(() => {
@@ -618,6 +622,22 @@ export function setOptimizationMemoCacheSize(size: number) {
   maxOptimizationMemoCacheSize = size > 0 ? size : 1000;
 }
 
+/**
+ * Evicts the oldest half of entries from a Map when it exceeds maxSize.
+ * Uses insertion-order iteration (guaranteed by ES spec) to drop the
+ * earliest-inserted entries, avoiding bursty cache clearance at the boundary.
+ */
+function evictOldestHalf(map: Map<unknown, unknown>, maxSize: number): void {
+  if (map.size < maxSize) return;
+  const dropCount = Math.ceil(map.size / 2);
+  const keys = map.keys();
+  for (let i = 0; i < dropCount; i++) {
+    const { value, done } = keys.next();
+    if (done) break;
+    map.delete(value);
+  }
+}
+
 function stripOpenClawUntrustedMetadataEnvelope(
   text: string,
   options: { retainContext?: boolean } = {},
@@ -653,7 +673,7 @@ function stripOpenClawUntrustedMetadataEnvelope(
     remaining = next.text;
   }
   if (!stripped) {
-    if (cache.size >= maxOptimizationMemoCacheSize) cache.clear();
+    evictOldestHalf(cache, maxOptimizationMemoCacheSize);
     cache.set(text, text);
     return text;
   }
@@ -665,7 +685,7 @@ function stripOpenClawUntrustedMetadataEnvelope(
   const resultCore = contextLine ? `${contextLine}\n${strippedText}` : strippedText;
   const result = preamble ? `${preamble}${resultCore}` : resultCore;
 
-  if (cache.size >= maxOptimizationMemoCacheSize) cache.clear();
+  evictOldestHalf(cache, maxOptimizationMemoCacheSize);
   cache.set(text, result);
   return result;
 }
@@ -1399,7 +1419,7 @@ function isExactRecallFact(text: string, token: string): boolean {
   const result = /\bmeans\b/i.test(text) && !isQuestionShapedRecallCandidate(text);
 
   if (isExactRecallFactCache.size >= isExactRecallFactMaxCacheSize) {
-    isExactRecallFactCache.clear();
+    evictOldestHalf(isExactRecallFactCache, isExactRecallFactMaxCacheSize);
   }
   isExactRecallFactCache.set(text, result);
 
@@ -1511,7 +1531,7 @@ function sanitizeToolCallPatterns(
     .join("\n")
     .trim();
 
-  if (cache.size >= maxOptimizationMemoCacheSize) cache.clear();
+  evictOldestHalf(cache, maxOptimizationMemoCacheSize);
   cache.set(text, result);
   return result;
 }
@@ -3076,6 +3096,11 @@ export function buildContextEngineFactory(
 
       return { ok: true, queued: true };
     },
+    /**
+     * @internal Test-only hook: drains all pending async ingestion queues
+     * so assertions can inspect daemon RPC side effects deterministically.
+     * Production callers should not depend on this.
+     */
     async _flushAsyncIngestionQueues() {
       await Promise.all(Array.from(asyncIngestionQueues.values()));
     },
