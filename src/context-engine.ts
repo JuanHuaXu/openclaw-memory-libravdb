@@ -273,12 +273,18 @@ interface PostToolContextCache {
   lastUserIndex: number;
   systemPromptAddition: string;
 }
+const POST_TOOL_CACHE_MAX_SIZE = 100;
 const postToolRecallCache = new Map<string, PostToolContextCache>();
 
 function enqueueAsyncIngestion(sessionId: string, task: () => Promise<void>): void {
   const previous = asyncIngestionQueues.get(sessionId) ?? Promise.resolve();
   const next = previous.then(task).catch(() => {
     // Errors are already caught and logged inside the task.
+  }).finally(() => {
+    // Clean up settled entries to prevent unbounded map growth across sessions.
+    if (asyncIngestionQueues.get(sessionId) === next) {
+      asyncIngestionQueues.delete(sessionId);
+    }
   });
   asyncIngestionQueues.set(sessionId, next);
 }
@@ -295,13 +301,15 @@ function getNormalizedSourceContent(source: OpenClawCompatibleMessage): string {
 interface SourceIndex {
   byContent: Map<string, number[]>;
   byId: Map<string, number>;
+  length: number;
 }
 
 const sourceMessageIndexCache = new WeakMap<OpenClawCompatibleMessage[], SourceIndex>();
 
 function getSourceMessageIndex(sourceMessages: OpenClawCompatibleMessage[]): SourceIndex {
   let index = sourceMessageIndexCache.get(sourceMessages);
-  if (!index) {
+  // Rebuild if never built or if OpenClaw mutated the array in-place (length grew).
+  if (!index || index.length !== sourceMessages.length) {
     const byContent = new Map<string, number[]>();
     const byId = new Map<string, number>();
     for (let i = 0; i < sourceMessages.length; i++) {
@@ -319,7 +327,7 @@ function getSourceMessageIndex(sourceMessages: OpenClawCompatibleMessage[]): Sou
         }
       }
     }
-    index = { byContent, byId };
+    index = { byContent, byId, length: sourceMessages.length };
     sourceMessageIndexCache.set(sourceMessages, index);
   }
   return index;
@@ -354,6 +362,18 @@ function findMatchingSourceMessageIndex(
     }
   }
   return -1;
+}
+
+function hasLiveToolProtocolAfterLastUser(
+  messages: OpenClawCompatibleMessage[],
+  lastUserIndex: number,
+): boolean {
+  for (let i = lastUserIndex + 1; i < messages.length; i++) {
+    const msg = messages[i];
+    if (!msg) continue;
+    if (isToolResultRole(msg.role) || hasKernelToolCallBlock(msg.content)) return true;
+  }
+  return false;
 }
 
 function findLastUserMessageIndex(messages: OpenClawCompatibleMessage[]): number {
@@ -1222,7 +1242,16 @@ function sanitizeProviderReplayMessages(
       return [preserveLiveToolProtocolMessage(liveToolProtocolSource.message)];
     }
     const sanitized = sanitizeProviderReplayMessage(message, sourceMessages, lastUserIndex >= 0 ? lastUserIndex : undefined);
-    if (!sanitized) return [];
+    if (!sanitized) {
+      // Advance cursor past dropped current-turn non-user messages so
+      // an inert assistant preamble before a tool call doesn't stall the
+      // cursor and drop subsequent live tool protocol.
+      if (liveSourceCursor !== undefined && sourceMessages) {
+        const droppedIdx = findMatchingSourceMessageIndex(message, content, sourceMessages, liveSourceCursor);
+        if (droppedIdx >= liveSourceCursor) liveSourceCursor = droppedIdx + 1;
+      }
+      return [];
+    }
     return [sanitized];
   });
   if (
@@ -1772,15 +1801,18 @@ export function normalizeAssembleResult(
         messages.push(preserveLiveToolProtocolMessage(liveToolProtocolSource.message));
         liveSourceCursor = liveToolProtocolSource.index + 1;
       } else if (findLiveToolSourceInCurrentTurn(message, content, sourceMessages, undefined, lastUserIndex >= 0 ? lastUserIndex : undefined) >= 0) {
+        if (liveSourceCursor !== undefined) liveSourceCursor++;
         continue;
       } else if (isRealTranscript && !historicalToolSource && isProviderReplayRole(message.role)) {
         if (isHistoricalToolDerivedAssistantReply(message, content, sourceMessages)) {
+          if (liveSourceCursor !== undefined) liveSourceCursor++;
           continue;
         }
         const sanitizedContent = sanitizeToolCallPatterns(content, {
           stripOpenClawDirectives: message.role === "assistant",
         });
         if (isHistoricalAssistantActionPromise(message.role, sanitizedContent)) {
+          if (liveSourceCursor !== undefined) liveSourceCursor++;
           continue;
         }
         messages.push({
@@ -1789,6 +1821,7 @@ export function normalizeAssembleResult(
           ...(typeof message.id === "string" ? { id: message.id } : {}),
         });
       } else {
+        if (liveSourceCursor !== undefined) liveSourceCursor++;
         if (content.trim().length > 0) {
           const sanitizedContent = sanitizeToolCallPatterns(content, {
             stripOpenClawDirectives: message.role !== "user",
@@ -2564,7 +2597,8 @@ export function buildContextEngineFactory(
         ? normalizeKernelContent(args.prompt, { retainOpenClawContext: false })
         : "";
       const lastUserIndex = findLastUserMessageIndex(messages);
-      const isPostToolContinuation = lastUserIndex >= 0 && lastUserIndex < messages.length - 1;
+      const isPostToolContinuation = lastUserIndex >= 0 && lastUserIndex < messages.length - 1
+        && hasLiveToolProtocolAfterLastUser(messages, lastUserIndex);
       const lastUserMessage = findLastReplaySafeUserMessage(messages);
       const reservedCurrentTurnTokens = lastUserMessage
         ? approximateMessageTokens(lastUserMessage)
@@ -2795,6 +2829,10 @@ export function buildContextEngineFactory(
             }
           }
 
+          if (postToolRecallCache.size >= POST_TOOL_CACHE_MAX_SIZE) {
+            const oldest = postToolRecallCache.keys().next().value;
+            if (oldest !== undefined) postToolRecallCache.delete(oldest);
+          }
           postToolRecallCache.set(sessionId, {
             lastUserIndex,
             systemPromptAddition: enforced.systemPromptAddition,
