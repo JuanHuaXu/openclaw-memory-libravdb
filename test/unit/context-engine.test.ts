@@ -2489,7 +2489,6 @@ test("exact recall injects facts item-by-item, dropping tail items when budget i
   });
 
   const sp = assembled.systemPromptAddition;
-  console.log("DEBUG_SP_OUTPUT:", JSON.stringify({ sp, length: sp.length, messages: assembled.messages, tokens: assembled.estimatedTokens }));
   assert.ok(sp.includes("<memory_fact>"), "wrapper open is intact");
   assert.ok(sp.includes("</context_memory>"), "wrapper close is intact");
   assert.ok(sp.includes(ma), "first fact injected");
