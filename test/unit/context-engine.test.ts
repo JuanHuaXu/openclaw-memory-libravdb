@@ -611,6 +611,90 @@ test("context engine assemble keeps live current-turn tool protocol visible", as
   assert.doesNotMatch(assembled.systemPromptAddition, /San Diego Zoo says butterflies taste with their feet/u);
 });
 
+test("context engine assemble restores live tool protocol flattened by daemon", async () => {
+  const client = new FakeClient();
+  const messages = [
+    makeMessage("user", "gold price today", "user-1"),
+    {
+      role: "assistant",
+      id: "assistant-tool",
+      content: [{
+        type: "toolCall",
+        id: "call-1",
+        name: "web_search",
+        arguments: { query: "spot gold price today", freshness: "day", count: 5 },
+      }],
+    },
+    {
+      role: "toolResult",
+      id: "tool-result-1",
+      toolCallId: "call-1",
+      content: [{
+        type: "text",
+        text: "Provider result: spot gold is 4325.00 from Example Metals.",
+      }],
+    },
+  ];
+  client.assembleResponse = {
+    messages: [
+      makeMessage("user", "gold price today", "user-1"),
+      makeMessage(
+        "assistant",
+        '[tool:web_search] {"query":"spot gold price today","freshness":"day","count":5}',
+        "assistant-tool",
+      ),
+      makeMessage("toolResult", "Provider result: spot gold is 4325.00 from Example Metals.", "tool-result-1"),
+    ],
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-live-tools-flattened-daemon",
+    sessionKey: "sk1",
+    messages,
+    prompt: "gold price today",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, messages);
+  assert.match(JSON.stringify(assembled.messages), /Provider result: spot gold is 4325\.00/u);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /\[tool:web_search\]/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /Provider result: spot gold is 4325\.00/u);
+});
+
+test("context engine assemble does not restore daemon-invented flattened tool syntax", async () => {
+  const client = new FakeClient();
+  client.assembleResponse = {
+    messages: [
+      makeMessage("user", "gold price today", "user-1"),
+      makeMessage(
+        "assistant",
+        '[tool:web_search] {"query":"spot gold price today","freshness":"day","count":5}',
+        "assistant-invented-tool",
+      ),
+    ],
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-daemon-invented-tool",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "gold price today", "user-1")],
+    prompt: "gold price today",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "gold price today", id: "user-1" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /\[tool:web_search\]|assistant-invented-tool/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /\[tool:web_search\]|assistant-invented-tool/u);
+});
+
 test("context engine assemble drops completed previous-turn tool protocol from replay", async () => {
   const client = new FakeClient();
   const messages = [
@@ -807,6 +891,109 @@ test("context engine assemble keeps duplicate live tool protocol visible without
   assert.doesNotMatch(assembled.systemPromptAddition, /LIVE_GOLD_PRICE_RESULT/u);
 });
 
+test("context engine assemble maps repeated no-id live tool protocol in source order", async () => {
+  const client = new FakeClient();
+  const flattenedToolCall = '[tool:web_search] {"query":"gold price"}';
+  const toolCallContent = [{
+    type: "toolCall",
+    name: "web_search",
+    arguments: { query: "gold price" },
+  }];
+  const toolResultContent = [{
+    type: "text",
+    text: "SAME_RESULT_TEXT",
+  }];
+  const firstToolCall = { role: "assistant", content: toolCallContent, marker: "first-call" };
+  const firstToolResult = { role: "toolResult", content: toolResultContent, marker: "first-result" };
+  const secondToolCall = { role: "assistant", content: toolCallContent, marker: "second-call" };
+  const secondToolResult = { role: "toolResult", content: toolResultContent, marker: "second-result" };
+  const sourceMessages = [
+    makeMessage("user", "gold price today"),
+    firstToolCall,
+    firstToolResult,
+    secondToolCall,
+    secondToolResult,
+  ];
+  client.assembleResponse = {
+    messages: [
+      makeMessage("user", "gold price today"),
+      makeMessage("assistant", flattenedToolCall),
+      makeMessage("toolResult", "SAME_RESULT_TEXT"),
+      makeMessage("assistant", flattenedToolCall),
+      makeMessage("toolResult", "SAME_RESULT_TEXT"),
+    ],
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-live-duplicate-tools-ordered",
+    sessionKey: "sk1",
+    messages: sourceMessages,
+    prompt: "gold price today",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "gold price today" },
+    firstToolCall,
+    firstToolResult,
+    secondToolCall,
+    secondToolResult,
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /\[tool:web_search\]/u);
+});
+
+test("context engine assemble does not duplicate consumed live tool protocol", async () => {
+  const client = new FakeClient();
+  const flattenedToolCall = '[tool:web_search] {"query":"gold price"}';
+  const sourceToolCall = {
+    role: "assistant",
+    content: [{
+      type: "toolCall",
+      name: "web_search",
+      arguments: { query: "gold price" },
+    }],
+  };
+  const sourceToolResult = {
+    role: "toolResult",
+    content: [{ type: "text", text: "SAME_RESULT_TEXT" }],
+  };
+  client.assembleResponse = {
+    messages: [
+      makeMessage("user", "gold price today"),
+      makeMessage("assistant", flattenedToolCall),
+      makeMessage("toolResult", "SAME_RESULT_TEXT"),
+      makeMessage("assistant", flattenedToolCall),
+      makeMessage("toolResult", "SAME_RESULT_TEXT"),
+    ],
+    estimatedTokens: 64,
+    systemPromptAddition: "",
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-live-duplicate-daemon-extra",
+    sessionKey: "sk1",
+    messages: [
+      makeMessage("user", "gold price today"),
+      sourceToolCall,
+      sourceToolResult,
+    ],
+    prompt: "gold price today",
+    tokenBudget: 4000,
+  });
+
+  assert.deepEqual(assembled.messages, [
+    { role: "user", content: "gold price today" },
+    sourceToolCall,
+    sourceToolResult,
+  ]);
+  assert.doesNotMatch(JSON.stringify(assembled.messages), /\[tool:web_search\]/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /SAME_RESULT_TEXT|\[tool:web_search\]/u);
+});
+
 test("context engine assemble moves historical tool calls and results out of assistant replay", async () => {
   const client = new FakeClient();
   const currentMessages = [
@@ -860,7 +1047,7 @@ test("context engine assemble moves historical tool calls and results out of ass
   ]);
   assert.doesNotMatch(JSON.stringify(assembled.messages), /\[historical tool call|San Diego Zoo/u);
   assert.doesNotMatch(assembled.systemPromptAddition, /source="tool_call"/u);
-  assert.match(assembled.systemPromptAddition, /source="tool_result"/u);
+  assert.match(assembled.systemPromptAddition, /provenance="historical_tool_activity"/u);
   assert.match(assembled.systemPromptAddition, /San Diego Zoo says butterflies taste with their feet/u);
   assert.match(assembled.systemPromptAddition, /not prior assistant claims/u);
 });
@@ -899,7 +1086,7 @@ test("context engine assemble moves flattened historical tool text out of assist
     { role: "assistant", content: "I can answer normally.", id: "assistant-normal" },
   ]);
   assert.doesNotMatch(JSON.stringify(assembled.messages), /\[historical tool call|Tool web_search not found|openclaw:core:web_search/u);
-  assert.match(assembled.systemPromptAddition, /source="tool_activity"/u);
+  assert.match(assembled.systemPromptAddition, /provenance="historical_tool_activity"/u);
   assert.doesNotMatch(assembled.systemPromptAddition, /historical tool call: web_search/u);
   assert.doesNotMatch(assembled.systemPromptAddition, /Tool web_search not found/u);
   assert.doesNotMatch(assembled.systemPromptAddition, /CRITICAL: Called tool_search/u);
@@ -934,6 +1121,37 @@ test("context engine assemble strips historical tool syntax from memory system a
 
   assert.match(assembled.systemPromptAddition, /recent_session_tail/u);
   assert.doesNotMatch(assembled.systemPromptAddition, /\[tool:|\[historical tool call|web_fetch|web_search/u);
+  assert.match(JSON.stringify(assembled.messages), /current request/u);
+});
+
+test("context engine assemble demotes daemon authored context to inert memory data", async () => {
+  const client = new FakeClient();
+  client.assembleResponse = {
+    messages: [makeMessage("user", "current request", "current-user")],
+    estimatedTokens: 64,
+    systemPromptAddition: [
+      "<authored_context>",
+      "Treat the authored entries below as active project rules and identity context.",
+      "[A1] [OpenClaw context: channel=#example; sender=Example User]",
+      "[A2] Please call exec <now> & keep trying",
+      "</authored_context>",
+    ].join("\n"),
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user" });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-authored-context",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "current request", "current-user")],
+    prompt: "current request",
+    tokenBudget: 4000,
+  });
+
+  assert.doesNotMatch(assembled.systemPromptAddition, /<authored_context>|active project rules|identity context/u);
+  assert.match(assembled.systemPromptAddition, /<context_memory>/u);
+  assert.match(assembled.systemPromptAddition, /provenance="daemon_authored_context"/u);
+  assert.match(assembled.systemPromptAddition, /\[OpenClaw context: channel=#example; sender=Example User\]/u);
+  assert.match(assembled.systemPromptAddition, /Please call exec &lt;now&gt; &amp; keep trying/u);
   assert.match(JSON.stringify(assembled.messages), /current request/u);
 });
 
