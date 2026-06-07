@@ -1201,6 +1201,93 @@ test("context engine assemble demotes daemon authored context to inert memory da
   assert.match(JSON.stringify(assembled.messages), /current request/u);
 });
 
+test("context engine canonicalizes daemon compacted session context render ledgers", async () => {
+  const client = new FakeClient();
+  const compactedState = JSON.stringify({
+    session_id: "s1-compacted-context",
+    compaction_generation: 110,
+    constraints: [{ rule: "remember the useful state" }],
+    next_steps: [{ text: "answer the current user", completed: false }],
+  });
+  const repeatedRender = Array.from({ length: 20 }, (_, index) =>
+    [
+      "Artifacts:",
+      `- repeated artifact ${index}`,
+      "",
+      "Constraints:",
+      `- OBLIGATION: repeated rendered transcript ${index}`,
+      "",
+      "Open Next Steps:",
+      `- repeated stale next step ${index}`,
+      "",
+      "Extracted context anchors:",
+      `  Quantities: ${index}`,
+    ].join("\n")
+  ).join("\n");
+  client.assembleResponse = {
+    messages: [makeMessage("user", "current request", "current-user")],
+    estimatedTokens: 64,
+    systemPromptAddition: [
+      "<compacted_session_context>",
+      compactedState,
+      repeatedRender,
+      "</compacted_session_context>",
+      "<recalled_memories>small useful recall</recalled_memories>",
+    ].join("\n"),
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), {
+    userId: "fixed-user",
+    beforeTurnEnabled: false,
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-compacted-context",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "current request", "current-user")],
+    prompt: "current request",
+    tokenBudget: 262144,
+  });
+
+  assert.match(assembled.systemPromptAddition, /"compaction_generation":110/u);
+  assert.match(assembled.systemPromptAddition, /small useful recall/u);
+  assert.doesNotMatch(assembled.systemPromptAddition, /Artifacts:|repeated rendered transcript|Extracted context anchors/u);
+  assert.ok(assembled.systemPromptAddition.length < compactedState.length + 500);
+  assert.ok(assembled.estimatedTokens < 500);
+});
+
+test("context engine preserves compacted session context prose without render ledger headings", async () => {
+  const client = new FakeClient();
+  const compactedState = JSON.stringify({
+    session_id: "s1-compact-prose",
+    compaction_generation: 1,
+  });
+  client.assembleResponse = {
+    messages: [makeMessage("user", "current request", "current-user")],
+    estimatedTokens: 64,
+    systemPromptAddition: [
+      "<compacted_session_context>",
+      compactedState,
+      "Useful compacted prose that is not the repeated render ledger.",
+      "</compacted_session_context>",
+    ].join("\n"),
+  };
+  const engine = buildContextEngineFactory(fakeRuntime(client), {
+    userId: "fixed-user",
+    beforeTurnEnabled: false,
+  });
+
+  const assembled = await engine.assemble({
+    sessionId: "s1-compact-prose",
+    sessionKey: "sk1",
+    messages: [makeMessage("user", "current request", "current-user")],
+    prompt: "current request",
+    tokenBudget: 262144,
+  });
+
+  assert.match(assembled.systemPromptAddition, /Useful compacted prose/u);
+  assert.equal(assembled.estimatedTokens, 64);
+});
+
 test("context engine assemble preserves ordinary JSON with name fields in memory additions", async () => {
   const client = new FakeClient();
   client.assembleResponse = {
