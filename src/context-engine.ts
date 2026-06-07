@@ -956,6 +956,10 @@ function resolveDynamicCompactThreshold(
     logger?.info?.(`[compact:trace] resolveDynamicCompactThreshold branch=explicit tokenBudget=${tokenBudget} compactThreshold=${compactThreshold} → ${val}`);
     return val;
   }
+  if (compactSessionTokenBudget === 0) {
+    logger?.info?.(`[compact:trace] resolveDynamicCompactThreshold branch=disabled tokenBudget=${tokenBudget}`);
+    return undefined;
+  }
   const normalizedBudget = normalizeTokenBudget(tokenBudget);
   if (normalizedBudget == null) {
     logger?.info?.(`[compact:trace] resolveDynamicCompactThreshold branch=null_budget tokenBudget=${tokenBudget} → undefined`);
@@ -967,12 +971,6 @@ function resolveDynamicCompactThreshold(
   // enough turns to compact) or absurdly high (Codex Runtime 1M tokens
   // would produce an unreachable 800k threshold).
   const withBounds = Math.max(2000, Math.min(16000, derived));
-  // User-configured compactSessionTokenBudget overrides the ceiling.
-  if (typeof compactSessionTokenBudget === "number" && compactSessionTokenBudget > 0) {
-    const capped = Math.min(withBounds, compactSessionTokenBudget);
-    logger?.info?.(`[compact:trace] resolveDynamicCompactThreshold branch=user_cap tokenBudget=${tokenBudget} normalizedBudget=${normalizedBudget} fraction=${fraction} derived=${derived} withBounds=${withBounds} cap=${compactSessionTokenBudget} → ${capped}`);
-    return capped;
-  }
   logger?.info?.(`[compact:trace] resolveDynamicCompactThreshold branch=clamped tokenBudget=${tokenBudget} normalizedBudget=${normalizedBudget} fraction=${fraction} derived=${derived} withBounds=${withBounds} → ${withBounds}`);
   return withBounds;
 }
@@ -980,10 +978,21 @@ function resolveDynamicCompactThreshold(
 function resolvePredictiveCompactionTarget(params: {
   currentTokenCount: number | undefined;
   threshold: number | undefined;
+  compactSessionTokenBudget?: number;
+  lastCompactedTokenCount?: number;
 }): number | undefined {
   const currentTokenCount = normalizeCurrentTokenCount(params.currentTokenCount);
   const threshold = normalizeTokenBudget(params.threshold);
   if (currentTokenCount == null || threshold == null || currentTokenCount < threshold) {
+    return undefined;
+  }
+  const sinceLastBudget = normalizeTokenBudget(params.compactSessionTokenBudget);
+  const lastCompactedTokenCount = normalizeCurrentTokenCount(params.lastCompactedTokenCount);
+  if (
+    sinceLastBudget != null &&
+    lastCompactedTokenCount != null &&
+    currentTokenCount - lastCompactedTokenCount < sinceLastBudget
+  ) {
     return undefined;
   }
 
@@ -2058,6 +2067,8 @@ export function buildContextEngineFactory(
 
   const predictiveContextCache = new Map<string, import("./types.js").PredictedContext[]>();
   const PREDICTIVE_CACHE_MAX_SIZE = 100;
+  const predictiveCompactionCursors = new Map<string, number>();
+  const PREDICTIVE_COMPACTION_CURSOR_MAX_SIZE = 100;
 
   // BeforeTurnKernel state
   const turnCache = new TurnMemoryCache(100);
@@ -2295,6 +2306,14 @@ export function buildContextEngineFactory(
       cfg.compactionThresholdFraction,
       cfg.compactSessionTokenBudget,
     );
+
+  const markPredictiveCompactionCursor = (sessionId: string, currentTokenCount: number): void => {
+    if (predictiveCompactionCursors.size >= PREDICTIVE_COMPACTION_CURSOR_MAX_SIZE) {
+      const oldest = predictiveCompactionCursors.keys().next().value;
+      if (oldest !== undefined) predictiveCompactionCursors.delete(oldest);
+    }
+    predictiveCompactionCursors.set(sessionId, currentTokenCount);
+  };
 
   const buildAssemblyConfig = (tokenBudget: number | undefined) => ({
     useSessionRecallProjection: cfg.useSessionRecallProjection,
@@ -2569,6 +2588,8 @@ export function buildContextEngineFactory(
     const predictiveTargetSize = resolvePredictiveCompactionTarget({
       currentTokenCount: currentContextTokens,
       threshold: dynamicCompactThreshold,
+      compactSessionTokenBudget: cfg.compactSessionTokenBudget,
+      lastCompactedTokenCount: predictiveCompactionCursors.get(args.sessionId),
     });
     if (
       currentContextTokens == null ||
@@ -2593,6 +2614,9 @@ export function buildContextEngineFactory(
       force: true,
       currentTokenCount: currentContextTokens,
     });
+    if (compactionResult.compacted) {
+      markPredictiveCompactionCursor(args.sessionId, currentContextTokens);
+    }
     logPredictiveCompactionOutcome({
       logger,
       phase: "afterTurn",
@@ -2612,6 +2636,7 @@ export function buildContextEngineFactory(
     async bootstrap(args: { sessionId: string; sessionKey?: string; userId?: string }) {
       const sessionId = requireSessionId(args.sessionId, "bootstrap");
       predictiveContextCache.delete(sessionId);
+      predictiveCompactionCursors.delete(sessionId);
       postToolRecallCache.delete(sessionId);
       asyncIngestionQueues.delete(sessionId);
       const userId = resolveUserId({
@@ -2693,6 +2718,8 @@ export function buildContextEngineFactory(
       const predictiveTargetSize = resolvePredictiveCompactionTarget({
         currentTokenCount: currentContextTokens,
         threshold: dynamicCompactThreshold,
+        compactSessionTokenBudget: cfg.compactSessionTokenBudget,
+        lastCompactedTokenCount: predictiveCompactionCursors.get(sessionId),
       });
       if (dynamicCompactThreshold != null && predictiveTargetSize != null) {
         logPredictiveCompactionAttempt({
@@ -2711,6 +2738,9 @@ export function buildContextEngineFactory(
           force: true,
           currentTokenCount: currentContextTokens,
         });
+        if (compactionResult.compacted) {
+          markPredictiveCompactionCursor(sessionId, currentContextTokens);
+        }
         logPredictiveCompactionOutcome({
           logger,
           phase: "assemble",
@@ -3213,6 +3243,7 @@ export function buildContextEngineFactory(
         }
       }
       predictiveContextCache.clear();
+      predictiveCompactionCursors.clear();
       postToolRecallCache.clear();
       asyncIngestionQueues.clear();
       triggerCache.clear();
