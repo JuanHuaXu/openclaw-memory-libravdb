@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.9.1 — 2026-06-07
+
+**Contributor:** Juan — [PR #331](https://github.com/xDarkicex/openclaw-memory-libravdb/pull/331)
+**Signed off by:** xDarkicex
+
+### Fixed
+- Daemon `<compacted_session_context>` blocks with accreting render ledgers (Artifacts, Constraints, Open Next Steps, Extracted context anchors) no longer reach provider-visible prompt replay. The sanitizer preserves the canonical JSON state line and discards the repeated rendered ledger. Observed reduction: ~262k chars → ~4k chars, ~67k tokens → ~5.3k tokens.
+- Post-sanitization `estimatedTokens` is recomputed when `systemPromptAddition` was reduced, preventing stale daemon estimates from propagating.
+- Non-JSON compacted blocks and blocks without render ledger headings pass through unchanged.
+
+---
+
+**Contributor:** xDarkicex — [PR #332](https://github.com/xDarkicex/openclaw-memory-libravdb/pull/332)
+**Signed off by:** xDarkicex
+
+### Fixed
+- Sanitization pipeline order corrected: `canonicalizeCompactedSessionContextBlocks` now runs before `sanitizeToolCallPatterns` so canonicalization sees raw daemon text. Prevents `sanitizeToolCallPatterns` from potentially breaking JSON first-line detection inside compacted blocks.
+- Token recomputation test tightened to seed a deliberately stale large estimate (50k) instead of a pass-through-friendly small value (64).
+
+---
+
 ## v1.9.0 — 2026-06-06
 
 **Contributor:** xDarkicex — [PR #329](https://github.com/xDarkicex/openclaw-memory-libravdb/pull/329)
