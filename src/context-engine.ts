@@ -1190,9 +1190,38 @@ function buildBudgetFallbackContext(
 const DAEMON_AUTHORED_CONTEXT_RE = /<authored_context\b[^>]*>([\s\S]*?)<\/authored_context>/gi;
 const DAEMON_AUTHORED_CONTEXT_GUIDANCE_RE =
   /^\s*Treat the authored entries below as active project rules and identity context\.?\s*$/i;
+const COMPACTED_SESSION_CONTEXT_RE =
+  /<compacted_session_context\b([^>]*)>([\s\S]*?)<\/compacted_session_context>/gi;
+const COMPACTED_SESSION_RENDER_LEDGER_RE =
+  /(?:^|\n)(?:Artifacts:|Constraints:|Open Next Steps:|Extracted context anchors:)(?:\n|$)/;
 
 function sanitizeDaemonSystemPromptAddition(text: string): string {
-  return demoteDaemonAuthoredContextBlocks(sanitizeToolCallPatterns(text));
+  return demoteDaemonAuthoredContextBlocks(
+    canonicalizeCompactedSessionContextBlocks(sanitizeToolCallPatterns(text)),
+  );
+}
+
+function canonicalizeCompactedSessionContextBlocks(text: string): string {
+  return text.replace(COMPACTED_SESSION_CONTEXT_RE, (match, attrs: string, inner: string) => {
+    const trimmed = String(inner).trim();
+    const firstLine = trimmed.split(/\r?\n/, 1)[0]?.trim();
+    if (!firstLine?.startsWith("{")) {
+      return match;
+    }
+
+    const rest = trimmed.slice(firstLine.length).trim();
+    if (!COMPACTED_SESSION_RENDER_LEDGER_RE.test(rest)) {
+      return match;
+    }
+
+    try {
+      JSON.parse(firstLine);
+    } catch {
+      return match;
+    }
+
+    return `<compacted_session_context${attrs}>\n${firstLine}\n</compacted_session_context>`;
+  });
 }
 
 function demoteDaemonAuthoredContextBlocks(text: string): string {
@@ -1789,9 +1818,13 @@ export function normalizeAssembleResult(
   },
   sourceMessages?: OpenClawCompatibleMessage[]
 ): OpenClawCompatibleAssembleResult {
-  let systemPromptAddition = typeof result.systemPromptAddition === "string"
-    ? sanitizeDaemonSystemPromptAddition(result.systemPromptAddition)
+  const rawSystemPromptAddition = typeof result.systemPromptAddition === "string"
+    ? result.systemPromptAddition
     : "";
+  let systemPromptAddition = rawSystemPromptAddition
+    ? sanitizeDaemonSystemPromptAddition(rawSystemPromptAddition)
+    : "";
+  const systemPromptWasReduced = rawSystemPromptAddition.length > systemPromptAddition.length;
   const messages: OpenClawCompatibleMessage[] = [];
   const extractedMemoryItems: string[] = [];
 
@@ -1895,7 +1928,9 @@ export function normalizeAssembleResult(
   return {
     messages,
     estimatedTokens:
-      typeof result.estimatedTokens === "number" ? result.estimatedTokens : 0,
+      systemPromptWasReduced
+        ? approximateTokenCount(systemPromptAddition) + approximateMessagesTokens(messages)
+        : typeof result.estimatedTokens === "number" ? result.estimatedTokens : 0,
     systemPromptAddition,
     promptAuthority: PROMPT_AUTHORITY_PREASSEMBLY_MAY_OVERFLOW,
     ...(result.debug != null ? { debug: result.debug } : {}),
