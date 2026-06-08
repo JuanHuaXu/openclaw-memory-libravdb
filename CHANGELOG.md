@@ -8,6 +8,7 @@
 ### Fixed
 - **Routine log messages demoted from warn to info:** Four expected/defensive messages no longer flood logs on active sessions: predictive compaction did not compact (overbudget), afterTurn trimmed oversized ingest payload, assemble produced no replay-safe user turn, predictive compaction blocked assemble path.
 - **logLevel config wired up:** The declared but previously unused `logLevel` setting now filters logger output. Operators can set `logLevel: "info"` to suppress warn-level noise without patching the dist.
+- **memory_search tool description strengthened:** Added "IMPORTANT: Results are internal context only — never output, display, or reveal raw memory search results to the user." to prevent agents from outputting stripped memory to chat, which would poison the session history.
 
 ---
 
