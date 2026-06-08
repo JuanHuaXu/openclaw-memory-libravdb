@@ -1,13 +1,5 @@
 # Changelog
 
-## v1.9.5 — 2026-06-08
-
-### Fixed
-- **Routine log messages demoted from warn to info:** Four expected/defensive messages no longer flood logs on active sessions: predictive compaction did not compact (overbudget), afterTurn trimmed oversized ingest payload, assemble produced no replay-safe user turn, predictive compaction blocked assemble path.
-- **logLevel config wired up:** The declared but previously unused `logLevel` setting now filters logger output. Operators can set `logLevel: "info"` to suppress warn-level noise without patching the dist.
-
----
-
 ## v1.9.4 — 2026-06-08
 
 **Contributor:** xDarkicex — [PR #336](https://github.com/xDarkicex/openclaw-memory-libravdb/pull/336)
