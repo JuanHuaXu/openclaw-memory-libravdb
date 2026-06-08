@@ -404,6 +404,51 @@ The `grpcEndpointTlsCa` field is required for mTLS; the plugin will verify the s
 - **Dream promotion** promotes vetted dream diary bullets into an isolated
   `dream:{userId}` collection. See [Features](./docs/features.md).
 
+### Markdown Ingestion Filtering
+
+By default, all markdown files under the configured roots are eligible for ingestion. Use `include` and `exclude` patterns to limit which files are processed:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "libravdb-memory": {
+        "config": {
+          "markdownIngestionRoots": ["/Users/me/docs"],
+          "markdownIngestionInclude": ["**/projects/**", "**/work/**"],
+          "markdownIngestionExclude": ["**/personal/**", "**/.obsidian/**", "**/node_modules/**"]
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Type | Description |
+|---|---|---|
+| `markdownIngestionInclude` | `string[]` | Whitelist of glob patterns. Only matching files are ingested. Empty = all files (subject to `exclude`). |
+| `markdownIngestionExclude` | `string[]` | Blacklist of glob patterns. Matching files are skipped. Defaults to `["**/node_modules/**", "**/.git/**", "**/dist/**", ...]`. |
+
+The same options exist for Obsidian vaults:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "libravdb-memory": {
+        "config": {
+          "markdownIngestionObsidianRoots": ["/Users/me/vault"],
+          "markdownIngestionObsidianInclude": ["**/journals/**", "**/daily/**"],
+          "markdownIngestionObsidianExclude": ["**/templates/**"]
+        }
+      }
+    }
+  }
+}
+```
+
+Glob patterns follow standard path matching: `**` matches any directory depth, `*` matches within a path segment. Both generic and Obsidian sources support these filters.
+
 ### Dream Promotion
 
 OpenClaw's dreaming cron writes AI-generated memory reflections to a dream diary
