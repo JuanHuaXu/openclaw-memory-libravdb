@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.9.2 — 2026-06-07
+
+**Contributor:** xDarkicex — [PR #334](https://github.com/xDarkicex/openclaw-memory-libravdb/pull/334)
+**Signed off by:** xDarkicex
+
+### Fixed
+- **Compaction regression (v1.9.1):** Reverted unintended WIP predictive compaction code that was squash-merged in PR #331. `compactSessionTokenBudget: 0` no longer disables all automatic compaction. Restored v1.9.0 cap semantics (`Math.min(withBounds, budget)`) and removed unreviewed cursor tracking and repeat-suppression guard.
+- **Result replay regression (v1.9.1):** `canonicalizeCompactedSessionContextBlocks` no longer strips the render ledger prose that models need to understand session state. The first (latest, most complete) render ledger is preserved alongside the JSON state line; only repeated render ledgers from older compaction cycles are stripped. Boundary detection uses the full heading set (Artifacts, Constraints, Open Next Steps, Extracted context anchors) with seen-heading tracking to keep exactly one ledger.
+
+---
+
 ## v1.9.1 — 2026-06-07
 
 **Contributor:** Juan — [PR #331](https://github.com/xDarkicex/openclaw-memory-libravdb/pull/331)
