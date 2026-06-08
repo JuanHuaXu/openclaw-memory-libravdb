@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.9.3 — 2026-06-08
+
+**Contributor:** xDarkicex — [PR #335](https://github.com/xDarkicex/openclaw-memory-libravdb/pull/335)
+**Signed off by:** xDarkicex
+
+### Fixed
+- **Provider replay duplicate LLM repetition loop:** `pushProviderReplayMessage` gate in `normalizeAssembleResult` skips consecutive provider-replay messages whose role and sanitized content match the immediately preceding pushed message. Prevents the daemon's async `afterTurn` race (continuity tail vs `visibleMsgs`) from forwarding duplicate assistant responses to the model, which caused LLMs to enter copy-paste repetition of their own prior output.
+- **False dedup of legitimate consecutive repeats:** Source-index tracking prevents legitimately distinct transcript messages with identical content (e.g., user says "yes" twice) from being collapsed. Messages matching different source transcript positions pass through; only daemon-bug duplicates matching the same source index are suppressed.
+- **No-ID message dedup**: Provider-replay source cursor advances past consumed positions so consecutive identical messages without IDs resolve to distinct source indices rather than both matching the first occurrence.
+- **Live tool protocol bypass**: `consumeLiveToolAtCursor`-guarded tool messages push directly, bypassing the dedup gate so same-content tool results with different `toolCallId` linkages are never collapsed.
+
+---
+
 ## v1.9.2 — 2026-06-07
 
 **Contributor:** xDarkicex — [PR #334](https://github.com/xDarkicex/openclaw-memory-libravdb/pull/334)
