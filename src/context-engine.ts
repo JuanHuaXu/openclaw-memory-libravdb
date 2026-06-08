@@ -1852,6 +1852,31 @@ export function normalizeAssembleResult(
   const systemPromptWasReduced = rawSystemPromptAddition.length > systemPromptAddition.length;
   const messages: OpenClawCompatibleMessage[] = [];
   const extractedMemoryItems: string[] = [];
+  let lastProviderReplayKey: string | undefined;
+  let lastSourceIndex: number | undefined;
+
+  const pushProviderReplayMessage = (
+    message: OpenClawCompatibleMessage,
+    sourceIndex?: number,
+  ): void => {
+    const key = `${message.role}\0${message.content}`;
+    if (key === lastProviderReplayKey) {
+      if (
+        lastSourceIndex !== undefined &&
+        sourceIndex !== undefined &&
+        lastSourceIndex >= 0 &&
+        sourceIndex >= 0 &&
+        lastSourceIndex !== sourceIndex
+      ) {
+        // Fall through — push the message.
+      } else {
+        return;
+      }
+    }
+    messages.push(message);
+    lastProviderReplayKey = key;
+    lastSourceIndex = sourceIndex;
+  };
 
   const pushMemoryItem = (args: {
     content: string;
@@ -1869,6 +1894,7 @@ export function normalizeAssembleResult(
   if (Array.isArray(result.messages)) {
     const lastUserIndex = sourceMessages ? findLastUserMessageIndex(sourceMessages) : -1;
     let liveSourceCursor = sourceMessages ? lastUserIndex + 1 : undefined;
+    let providerReplaySourceCursor: number | undefined = sourceMessages ? 0 : undefined;
     for (const message of result.messages) {
       const content = normalizeKernelContent(message.content);
       const historicalToolSource = getHistoricalToolSource(message.role, message.content, content);
@@ -1888,6 +1914,10 @@ export function normalizeAssembleResult(
         lastUserIndex >= 0 ? lastUserIndex : undefined,
       );
       if (liveToolProtocolSource) {
+        // Live tool protocol messages are cursor-guarded by
+        // consumeLiveToolAtCursor — consecutive toolResults with the
+        // same content but different toolCallId linkage must not be
+        // collapsed. Push directly, bypassing provider-replay dedup.
         messages.push(preserveLiveToolProtocolMessage(liveToolProtocolSource.message));
         liveSourceCursor = liveToolProtocolSource.index + 1;
       } else if (findLiveToolSourceInCurrentTurn(message, content, sourceMessages, undefined, lastUserIndex >= 0 ? lastUserIndex : undefined) >= 0) {
@@ -1914,11 +1944,24 @@ export function normalizeAssembleResult(
           }
           continue;
         }
-        messages.push({
-          role: message.role,
-          content: sanitizedContent,
-          ...(typeof message.id === "string" ? { id: message.id } : {}),
-        });
+        const providerReplaySourceIndex = sourceMessages
+          ? findMatchingSourceMessageIndex(message, content, sourceMessages, providerReplaySourceCursor)
+          : undefined;
+        pushProviderReplayMessage(
+          {
+            role: message.role,
+            content: sanitizedContent,
+            ...(typeof message.id === "string" ? { id: message.id } : {}),
+          },
+          providerReplaySourceIndex,
+        );
+        if (
+          providerReplaySourceCursor !== undefined &&
+          providerReplaySourceIndex !== undefined &&
+          providerReplaySourceIndex >= 0
+        ) {
+          providerReplaySourceCursor = providerReplaySourceIndex + 1;
+        }
       } else {
         // Daemon memory items may not be in sourceMessages — only advance
         // cursor if the message is actually findable in the source transcript.
