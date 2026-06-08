@@ -1053,7 +1053,7 @@ function logPredictiveCompactionOutcome(params: {
     params.logger.info?.(message);
     return;
   }
-  params.logger.warn?.(message);
+  params.logger.info?.(message);
 }
 
 /**
@@ -1122,7 +1122,7 @@ function boundAfterTurnMessagesForIngest(
 
   const bounded = trimMessagesToBudget(messages, AFTER_TURN_INGEST_MAX_TOKENS)
     .map((message) => normalizeKernelMessage(message));
-  logger.warn?.(
+  logger.info?.(
     `LibraVDB afterTurn trimmed oversized ingest payload sessionId=${sessionId} ` +
     `estimatedTokens=${estimatedTokens} maxTokens=${AFTER_TURN_INGEST_MAX_TOKENS} ` +
     `forwardedMessages=${bounded.length}`,
@@ -1766,7 +1766,7 @@ function ensureReplaySafeUserTurn(
   const fallbackUser = findLastReplaySafeUserMessage(sourceMessages);
   if (!fallbackUser) return assembled;
 
-  logger?.warn?.(
+  logger?.info?.(
     "LibraVDB assemble produced no replay-safe user turn; reinjecting the latest user message for provider compatibility.",
   );
   const baseEstimatedTokens = Math.max(
@@ -2790,7 +2790,7 @@ export function buildContextEngineFactory(
           reason: compactionResult.reason,
         });
         if (!compactionResult.ok) {
-          logger.warn?.(
+          logger.info?.(
             `LibraVDB predictive compaction blocked assemble path at ${currentContextTokens} tokens ` +
             `(threshold=${dynamicCompactThreshold}): ${compactionResult.reason ?? "compaction failed"}`,
           );

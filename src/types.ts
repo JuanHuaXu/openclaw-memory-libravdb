@@ -190,3 +190,20 @@ export interface PredictedContext {
   text: string;
   reason: string;
 }
+
+const LOG_LEVEL_RANK: Record<string, number> = {
+  error: 0,
+  warn: 1,
+  info: 2,
+  debug: 3,
+};
+
+/** Wraps a LoggerLike with logLevel filtering. Levels below configured min are dropped. */
+export function levelFilteredLogger(base: LoggerLike, logLevel: PluginConfig["logLevel"]): LoggerLike {
+  const minRank = LOG_LEVEL_RANK[logLevel ?? "warn"];
+  return {
+    error: (msg) => base.error(msg),
+    warn: (msg) => { if (LOG_LEVEL_RANK.warn <= minRank) base.warn?.(msg); },
+    info: (msg) => { if (LOG_LEVEL_RANK.info <= minRank) base.info?.(msg); },
+  };
+}

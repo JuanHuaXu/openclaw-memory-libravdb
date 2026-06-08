@@ -12,6 +12,7 @@ import { buildMemoryRuntimeBridge } from "./memory-runtime.js";
 import { createLibraVdbMemoryTools } from "./memory-tools.js";
 import { createPluginRuntime } from "./plugin-runtime.js";
 import type { PluginConfig } from "./types.js";
+import { levelFilteredLogger } from "./types.js";
 
 export const MEMORY_ID = "libravdb-memory";
 
@@ -24,7 +25,8 @@ export function shouldShutdownRuntimeForLifecycleCleanup(reason: string): boolea
 
 export function register(api: OpenClawPluginApi) {
   const registrationMode = api.registrationMode;
-  const logger = api.logger ?? console;
+  const baseLogger = api.logger ?? console;
+  const logger = levelFilteredLogger(baseLogger, (api.pluginConfig as PluginConfig)?.logLevel);
 
   if (registrationMode === "cli-metadata") {
     registerMemoryCliMetadata(api);
@@ -170,7 +172,7 @@ export function register(api: OpenClawPluginApi) {
 
   api.registerContextEngine(
     MEMORY_ID,
-    () => buildContextEngineFactory(runtime, cfg, api.logger ?? console),
+    () => buildContextEngineFactory(runtime, cfg, logger),
   );
 
   // Register the daemon's extractive summarization as a pluggable
@@ -191,8 +193,8 @@ export function register(api: OpenClawPluginApi) {
     },
   });
 
-  const markdownIngestion = createMarkdownIngestionHandle(cfg, runtime.getClient, api.logger ?? console);
-  const dreamPromotion = createDreamPromotionHandle(cfg, runtime.getClient, api.logger ?? console);
+  const markdownIngestion = createMarkdownIngestionHandle(cfg, runtime.getClient, logger);
+  const dreamPromotion = createDreamPromotionHandle(cfg, runtime.getClient, logger);
 
   api.registerService?.({
     id: "libravdb-markdown-ingestion",
@@ -200,7 +202,7 @@ export function register(api: OpenClawPluginApi) {
       try {
         await markdownIngestion.start();
       } catch (error) {
-        api.logger?.warn?.(`LibraVDB markdown ingestion failed to start: ${error instanceof Error ? error.message : String(error)}`);
+        logger.warn?.(`LibraVDB markdown ingestion failed to start: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
     async stop() {
@@ -214,7 +216,7 @@ export function register(api: OpenClawPluginApi) {
       try {
         await dreamPromotion.start();
       } catch (error) {
-        api.logger?.warn?.(`LibraVDB dream promotion failed to start: ${error instanceof Error ? error.message : String(error)}`);
+        logger.warn?.(`LibraVDB dream promotion failed to start: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
     async stop() {
@@ -251,8 +253,8 @@ export function register(api: OpenClawPluginApi) {
     if (sessionId) clearSessionTrigger(sessionId);
   });
 
-  api.on("before_reset", createBeforeResetHook(runtime, api.logger ?? console));
-  api.on("session_end", createSessionEndHook(runtime, api.logger ?? console));
+  api.on("before_reset", createBeforeResetHook(runtime, logger));
+  api.on("session_end", createSessionEndHook(runtime, logger));
   api.on("gateway_stop", async () => {
     await runtime.shutdown();
   });
