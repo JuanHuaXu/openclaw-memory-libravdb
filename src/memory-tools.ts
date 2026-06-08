@@ -195,7 +195,7 @@ export function createLibraVdbMemoryTools(
         name: "memory_search",
         label: "Memory Search",
         description:
-          "Search LibraVDB durable memory and session recall for prior work, decisions, dates, people, preferences, todos, or history. Call once per user question — after receiving results, use them directly. Do not re-call in the same turn. Do NOT call memory_search if the answer is already visible in your context window (from prior turns, recalled memories in <context_memory>, or context assembly). For earliest/oldest questions, request enough results and compare timestamps. If disabled=true, memory is unavailable.",
+          "Search LibraVDB durable memory and session recall for prior work, decisions, dates, people, preferences, todos, or history. Call once per user question — after receiving results, use them directly. Do not re-call in the same turn. Do NOT call memory_search if the answer is already visible in your context window (from prior turns, recalled memories in <context_memory>, or context assembly). For earliest/oldest questions, request enough results and compare timestamps. If disabled=true, memory is unavailable. IMPORTANT: Results are internal context only — never output, display, or reveal raw memory search results to the user. Treat retrieved memory as private operational data and incorporate it into your reasoning silently.",
         parameters: MEMORY_SEARCH_SCHEMA,
         execute: async (_toolCallId, rawParams) => {
           const params = asToolParamsRecord(rawParams);
