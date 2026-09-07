@@ -1,7 +1,33 @@
 # Smart history hydration: TypeScript serving core
 
-Status: isolated implementation; not registered, enabled, or deployed.
-Production remains on historicalToolReplay=recall.
+Status: production adapter available behind `historicalToolReplay=smart`.
+`recall` remains the immediate configuration rollback.
+
+The adapter uses OpenClaw's scoped, generation-aware transcript SDK, including
+SQLite-backed sessions. Background capture stores compact descriptors and original
+transcript pointers in a dedicated LibraVDB collection per tenant/session/audience.
+It indexes only completed, balanced tool-backed turns. Associated reasoning can
+be retrieved alongside tool results; ordinary social reasoning is not indexed.
+Original messages are never rewritten. Index writes are idempotent across restart.
+
+Semantic nomination uses `SearchText`, not lexical `RankCandidates`. The initial
+conservative score gate is 0.75 (a ranking score, not a probability). A production
+calibration corpus is still needed; low-scoring relevant queries can be missed.
+Implicit references such as "continue" are not guaranteed to resolve. Final
+answers and the active user/tool exchange remain in the host transcript.
+
+Evidence is explicitly partial: at most eight 1024-character spans, at most two
+per block, prioritizing tool results. Retrieval packs at most two frames and four
+spans within 16 KB and a two-second serving deadline. Beginning and terminal
+transcript anchors are validated, and each returned span is hash checked. A
+missing or invalid anchor never causes broad replay. This is bounded source
+evidence retrieval, not the full EventFrame forecasting/learning system.
+
+Background catch-up reads at most 256 bounded single-message pages per trigger;
+later turns continue catch-up. It does not block the model waiting for ingestion.
+The host retains at most 64 session adapters per runtime, evicting idle adapters
+after 30 minutes when admitting another session. Post-tool continuations reuse
+the same turn's packet; hydration never modifies active tool protocol.
 
 This translates the useful serving concepts from EventFrame into TypeScript.
 It neither imports eventframed nor reproduces its forecasting, posterior,
@@ -36,7 +62,29 @@ and unresolved exchanges stay outside this optimization. Matching similarity
 does not confer instruction authority. XML escaping prevents delimiter breakout,
 not semantic prompt injection or guaranteed model compliance.
 
-## Required adapters before production
+## Serving contracts
+
+### Inactivity window
+
+`HydrationWorkingSet` is an optional RAM-only wrapper owned by one host
+conversation scope. It retains at most 100 frame IDs (maximum 4096 characters
+each) and their last packed user-turn ordinals. No raw evidence is cached.
+The host must serialize calls and provide the same ordinal for tool steps/retries
+within one user turn. Older ordinals and mismatched scopes are rejected.
+
+A frame expires before selection on the fifth subsequent turn without packed
+reuse. Selection on turn 4 after selection on turn 0 extends availability through
+turn 8; it expires on turn 9 unless selected again. Nomination, weak matches, and
+failed packets do not renew it. An empty greeting packet does not replay retained
+evidence. Retained IDs are refreshed through scoped `index.get` and reranked;
+normal nomination retains candidate capacity. Explicit references can still
+rediscover expired frames from durable storage. This does not yet solve the
+ranker's demonstrated paraphrase/implicit-continuation miss.
+
+The host must call `clear()` on reset or dispose the instance on scope/task
+replacement. Concurrent calls/reset fail explicitly. The production owner keys
+instances by tenant, session and audience; transcript generations are validated
+again before evidence can be returned.
 
 - `HydrationIndex`: canonical frame nomination and reranking, with tenant,
   session/audience and as-of filtering BEFORE the candidate limit. Retrieval
@@ -74,4 +122,4 @@ Promotion requires real indexed-frame positive/paraphrase and greeting-negative
 controls; why/continue with recent context; exact evidence recovery after restart;
 wrong-participant and stale-correction controls; live post-tool continuation; and
 held-out answer-quality plus cold/warm latency comparison against full replay and
-the deployed rescue. No performance gain is claimed for this component yet.
+the deployed rescue. Component benchmarks do not establish live Gateway latency.

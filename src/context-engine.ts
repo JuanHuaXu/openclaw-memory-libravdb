@@ -4,8 +4,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildRulesContext } from "./rules.js";
 import { resolveReadTenants } from "./identity.js";
+import { TranscriptHydration, type TranscriptReader } from "./hydration-transcript.js";
 
 import type { PluginRuntime } from "./plugin-runtime.js";
+
+const hydrationSessions = new WeakMap<PluginRuntime, Map<string, { adapter: TranscriptHydration; used: number; key?: string; context?: string }>>();
 import type {
   LoggerLike,
   PluginConfig,
@@ -408,7 +411,7 @@ type KernelContentNormalizationOptions = {
 /**
  * Normalizes kernel content (string or block array) to a flat string.
  */
-function normalizeKernelContent(content: unknown, options: KernelContentNormalizationOptions = {}): string {
+export function normalizeKernelContent(content: unknown, options: KernelContentNormalizationOptions = {}): string {
   const text = typeof content === "string"
     ? content
     : Array.isArray(content)
@@ -3115,7 +3118,7 @@ export function buildContextEngineFactory(
           ? args.messages.slice(cachedCompactedProjection.sourceStartIndex)
           : recentMessages
         : args.messages;
-      const projectedSourceMessages = () => cfg.historicalToolReplay === "recall"
+      const projectedSourceMessages = () => cfg.historicalToolReplay === "recall" || cfg.historicalToolReplay === "smart"
         ? projectHistoricalEvidenceForRecall(rawProjectedSourceMessages())
         : rawProjectedSourceMessages();
       const buildAssembleFallback = (): OpenClawCompatibleAssembleResult => {
@@ -4192,7 +4195,7 @@ export function buildContextEngineFactory(
     },
   };
 
-  if (cfg.historicalToolReplay === "recall") {
+  if (cfg.historicalToolReplay === "recall" || cfg.historicalToolReplay === "smart") {
     const assemble = engine.assemble;
     engine.assemble = async (args) => {
       const result = await assemble(args);
@@ -4200,8 +4203,7 @@ export function buildContextEngineFactory(
       // Apply at the return boundary too: daemon errors and budget fallbacks
       // must not silently restore the historical payloads.
       const messages = projectHistoricalEvidenceForRecall(result.messages);
-      if (messages === result.messages) return result;
-      return {
+      let projected = {
         ...result,
         messages,
         estimatedTokens: Math.max(
@@ -4209,6 +4211,49 @@ export function buildContextEngineFactory(
           result.estimatedTokens - approximateMessagesTokens(result.messages) + approximateMessagesTokens(messages),
         ),
       };
+      if (cfg.historicalToolReplay === "smart" && args.sessionKey) {
+        try {
+          const userId = resolveUserId({ userIdOverride: args.userId, sessionKey: args.sessionKey });
+          const scope = { tenant: userId, session: args.sessionId, audience: args.sessionKey };
+          const id = JSON.stringify(scope);
+          let sessions = hydrationSessions.get(runtime);
+          if (!sessions) { sessions = new Map(); hydrationSessions.set(runtime, sessions); }
+          let state = sessions.get(id);
+          if (!state) {
+            for (const [key, value] of sessions) if (Date.now() - value.used > 30 * 60_000) {
+              sessions.delete(key); void value.adapter.close().catch(() => {});
+            }
+            if (sessions.size >= 64) return projected;
+            const sdkName = "openclaw/plugin-sdk/session-transcript-runtime";
+            const sdk = await import(sdkName);
+            if (typeof sdk.readSessionTranscriptVisibleMessageDelta !== "function") return projected;
+            const adapter = new TranscriptHydration(scope, await runtime.getClient(), sdk.readSessionTranscriptVisibleMessageDelta as TranscriptReader,
+              text => normalizeKernelContent(text, { retainOpenClawContext: false }));
+            state = { adapter, used: Date.now() }; sessions.set(id, state);
+          }
+          state.used = Date.now();
+          void state.adapter.refresh().catch(() => logger.warn?.("LibraVDB smart hydration background capture unavailable"));
+          const lastUser = findLastUserMessageIndex(args.messages);
+          if (lastUser < 0) return projected;
+          const key = createHash("sha256").update(JSON.stringify(args.messages[lastUser])).digest("hex");
+          const postTool = hasLiveToolProtocolAfterLastUser(args.messages, lastUser);
+          const remaining = args.tokenBudget - approximateMessagesTokens(projected.messages) - approximateTokenCount(projected.systemPromptAddition);
+          const budget = Math.min(16000, Math.max(0, Math.floor(remaining)));
+          let context = state.key === key && postTool ? state.context ?? "" : "";
+          if (!postTool && budget >= 1024) {
+            const query = normalizeKernelContent(args.prompt ?? args.messages[lastUser].content, { retainOpenClawContext: false });
+            const packet = await state.adapter.hydrate(query, key, budget);
+            context = packet.context; state.key = key; state.context = context;
+            logger.info?.(`LibraVDB smart hydration status=${packet.status} frames=${packet.selectedIds.length} reads=${packet.hydratedIds.length} bytes=${Buffer.byteLength(context)} elapsedMs=${Math.round(packet.elapsedMs)}`);
+          }
+          if (context && Buffer.byteLength(context) <= budget) projected = { ...projected,
+            systemPromptAddition: appendSystemPromptAddition(projected.systemPromptAddition, context),
+            estimatedTokens: projected.estimatedTokens + approximateTokenCount(context) };
+        } catch {
+          logger.warn?.("LibraVDB smart hydration unavailable; using recall projection");
+        }
+      }
+      return projected;
     };
   }
   return engine;

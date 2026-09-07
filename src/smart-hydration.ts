@@ -86,6 +86,8 @@ export async function hydrateHistory(input: {
   index: HydrationIndex;
   archive: EvidenceArchive;
   signal?: AbortSignal;
+  /** Retention nominates candidates; it never grants relevance or authority. */
+  retainedIds?: string[];
 }): Promise<HydrationPacket> {
   const start = performance.now();
   const { scope, policy, index, archive } = input;
@@ -129,6 +131,12 @@ export async function hydrateHistory(input: {
     if (query.referencedIds.length) {
       const refs = await call(() => index.get({ scope, ids: query.referencedIds, asOf: input.asOf, signal: controller.signal }));
       add(refs.filter(f => query.referencedIds.includes(f.id)));
+    }
+    const retained = [...new Set(input.retainedIds ?? [])].filter(id => !candidates.has(id))
+      .slice(0, Math.floor((policy.candidates - candidates.size) / 2));
+    if (retained.length) {
+      const found = await call(() => index.get({ scope, ids: retained, asOf: input.asOf, signal: controller.signal }));
+      add(found.filter(f => retained.includes(f.id)));
     }
     const nominationLimit = Math.max(1, Math.floor((policy.candidates - candidates.size) * 0.8));
     add((await call(() => index.nominate({ scope, query, asOf: input.asOf, limit: nominationLimit, signal: controller.signal }))).slice(0, nominationLimit));
@@ -199,5 +207,45 @@ export async function hydrateHistory(input: {
     clearTimeout(timer);
     input.signal?.removeEventListener("abort", abort);
     packet.elapsedMs = performance.now() - start;
+  }
+}
+
+/** One instance per host conversation scope. Host user-turn ordinals, not tool steps. */
+export class HydrationWorkingSet {
+  private readonly scope: HydrationScope;
+  private readonly used = new Map<string, number>();
+  private turn = -1;
+  private busy = false;
+
+  constructor(scope: HydrationScope) { this.scope = { ...scope }; }
+
+  clear(): void {
+    if (this.busy) throw new Error("Cannot reset hydration during a turn");
+    this.used.clear();
+    this.turn = -1;
+  }
+
+  async hydrate(input: Parameters<typeof hydrateHistory>[0] & { turn: number }): Promise<HydrationPacket> {
+    if (this.busy || !sameScope(input.scope, this.scope) ||
+        !Number.isSafeInteger(input.turn) || input.turn < 0 || input.turn < this.turn) {
+      throw new Error("Invalid hydration working-set turn or scope");
+    }
+    this.busy = true;
+    this.turn = input.turn;
+    // The fifth inactive turn expires before selection. Retrieval can still
+    // rediscover the durable frame through normal nomination or an explicit reply.
+    for (const [id, lastUsed] of this.used) if (input.turn - lastUsed >= 5) this.used.delete(id);
+    try {
+      const packet = await hydrateHistory({ ...input, retainedIds: [...this.used.keys()].reverse() });
+      if (packet.status === "ok" && packet.context) {
+        for (const id of packet.selectedIds) {
+          if (id.length > 4096) continue;
+          this.used.delete(id);
+          this.used.set(id, input.turn);
+        }
+        while (this.used.size > 100) this.used.delete(this.used.keys().next().value!);
+      }
+      return packet;
+    } finally { this.busy = false; }
   }
 }

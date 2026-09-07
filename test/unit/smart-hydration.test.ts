@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { hydrateHistory, type HydrationFrame, type HydrationIndex, type EvidenceArchive, type HydrationPolicy } from "../../src/smart-hydration.js";
+import { hydrateHistory, HydrationWorkingSet, type HydrationFrame, type HydrationIndex, type EvidenceArchive, type HydrationPolicy } from "../../src/smart-hydration.js";
 
 const scope = { tenant: "test-tenant", session: "test-session", audience: "test-room" };
 const policy: HydrationPolicy = { candidates: 10, frames: 3, evidenceReads: 4, byteBudget: 12000, timeoutMs: 100, minimumScore: 0.5 };
@@ -147,4 +147,74 @@ test("rank request includes bounded recent context but no raw evidence", async (
     return [];
   };
   await f.run({ query: { text: "Why?", recentFrames: [frame("a"), frame("b"), frame("c")], referencedIds: [] } });
+});
+
+function workingFixture() {
+  const f = fixture();
+  const working = new HydrationWorkingSet(scope);
+  const run = (turn: number) => working.hydrate({ scope, turn, query: { text: "query", recentFrames: [], referencedIds: [] }, asOf: 20, policy, index: f.index, archive: f.archive });
+  return { ...f, working, run };
+}
+
+test("retention survives four idle turns but expires on the fifth without injecting greetings", async () => {
+  const f = workingFixture();
+  await f.run(0);
+  f.index.nominate = async () => [];
+  f.setScores([]);
+  for (let turn = 1; turn <= 4; turn++) {
+    f.calls.length = 0;
+    assert.equal((await f.run(turn)).context, "");
+    assert.ok(f.calls.includes("get"));
+    assert.ok(!f.calls.some(c => c.startsWith("read:")));
+  }
+  f.calls.length = 0;
+  f.setScores([{ id: "cache", score: 1 }]);
+  assert.equal((await f.run(5)).context, "");
+  assert.ok(!f.calls.includes("get"));
+});
+
+test("packed reuse slides expiry, while repeated tool steps do not advance turns", async () => {
+  const f = workingFixture(); await f.run(0);
+  f.index.nominate = async () => [];
+  f.setScores([]);
+  for (let step = 0; step < 8; step++) await f.run(1);
+  f.setScores([{ id: "cache", score: 1 }]);
+  assert.deepEqual((await f.run(4)).selectedIds, ["cache"]);
+  assert.deepEqual((await f.run(8)).selectedIds, ["cache"]);
+  assert.equal((await f.run(13)).context, "");
+});
+
+test("retention refreshes canonical evidence and cannot cross scope or survive reset", async () => {
+  const f = workingFixture(); await f.run(0);
+  f.index.nominate = async () => [];
+  f.index.get = async () => [{ ...frame("cache"), scope: { ...scope, audience: "other" } }];
+  assert.equal((await f.run(1)).context, "");
+  f.index.get = async () => [];
+  assert.equal((await f.run(2)).context, "");
+  await assert.rejects(f.working.hydrate({ scope: { ...scope, session: "other" }, turn: 3,
+    query: { text: "hello", recentFrames: [], referencedIds: [] }, asOf: 20, policy, index: f.index, archive: f.archive }));
+  await assert.rejects(f.run(1));
+  f.working.clear();
+  f.calls.length = 0;
+  assert.equal((await f.run(0)).context, "");
+  assert.ok(!f.calls.includes("get"));
+});
+
+test("failed hydration cannot renew selected frames from an incomplete packet", async () => {
+  const f = workingFixture(); await f.run(0);
+  f.index.nominate = async () => [];
+  f.archive.read = async () => { throw new Error("archive unavailable"); };
+  assert.equal((await f.run(4)).status, "unavailable");
+  assert.equal((await f.run(5)).context, "");
+});
+
+test("overlapping calls and reset cannot overwrite an in-flight working set", async () => {
+  const f = workingFixture();
+  let release!: () => void;
+  f.index.nominate = async () => { await new Promise<void>(resolve => { release = resolve; }); return [frame("cache")]; };
+  const pending = f.run(0);
+  await assert.rejects(f.run(1));
+  assert.throws(() => f.working.clear());
+  release();
+  assert.equal((await pending).status, "ok");
 });

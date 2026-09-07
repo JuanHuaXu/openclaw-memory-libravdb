@@ -135,9 +135,9 @@
       },
       "historicalToolReplay": {
         "type": "string",
-        "enum": ["full", "recall"],
+        "enum": ["full", "recall", "smart"],
         "default": "full",
-        "description": "Recall mode omits completed historical tool exchanges and reasoning from replay, retaining final answers. Current and unresolved exchanges remain exact. Older evidence requires memory retrieval or a fresh tool call; stored history is unchanged."
+        "description": "Recall mode omits completed historical tool exchanges and reasoning from replay, retaining final answers. Smart mode also indexes compact session descriptors asynchronously and retrieves bounded original transcript excerpts for relevant queries. Current and unresolved exchanges remain exact. Smart mode requires the host session-transcript-runtime SDK."
       },
       "grpcEndpoint": {
         "type": "string",
