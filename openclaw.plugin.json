@@ -133,6 +133,12 @@
       "useSessionRecallProjection": {
         "type": "boolean"
       },
+      "historicalToolReplay": {
+        "type": "string",
+        "enum": ["full", "recall"],
+        "default": "full",
+        "description": "Recall mode omits completed historical tool exchanges and reasoning from replay, retaining final answers. Current and unresolved exchanges remain exact. Older evidence requires memory retrieval or a fresh tool call; stored history is unchanged."
+      },
       "grpcEndpoint": {
         "type": "string",
         "description": "Optional gRPC kernel endpoint for hosts using the daemon kernel transport."

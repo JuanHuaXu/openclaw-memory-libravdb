@@ -734,6 +734,60 @@ function approximateMessageTokens(message: OpenClawCompatibleMessage): number {
 /**
  * Sums approximate tokens across an array of messages.
  */
+export function projectHistoricalEvidenceForRecall(messages: OpenClawCompatibleMessage[]): OpenClawCompatibleMessage[] {
+  const record = (value: unknown): Record<string, unknown> =>
+    value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
+  const completed = new Set<number>();
+  let start = 0;
+  for (let end = 0; end < messages.length; end++) {
+    if (messages[end].role !== "user") continue;
+    const tail = messages[end - 1];
+    // A later user turn plus an explicit final answer closes the protocol.
+    if (tail?.role === "assistant" && tail.stopReason === "stop" &&
+        !hasKernelToolCallBlock(tail.content) &&
+        (typeof tail.content === "string" ? tail.content.trim() : tail.content.some((value) => {
+          const b = record(value);
+          return b.type === "text" && typeof b.text === "string" && b.text.trim();
+        }))) {
+      const pending = new Set<string>();
+      const seen = new Set<string>();
+      let valid = messages[start]?.role === "user";
+      for (let i = start; i < end; i++) {
+        const message = messages[i];
+        if (message.role === "assistant" && Array.isArray(message.content)) {
+          for (const value of message.content) {
+            const block = record(value);
+            if (block?.type !== "toolCall") continue;
+            if (typeof block.id !== "string" || !block.id || seen.has(block.id)) valid = false;
+            else { seen.add(block.id); pending.add(block.id); }
+          }
+        } else if (isToolResultRole(message.role)) {
+          if (typeof message.toolCallId !== "string" || !pending.delete(message.toolCallId)) valid = false;
+        } else if (message.role !== "assistant" && message.role !== "user") valid = false;
+      }
+      if (valid && pending.size === 0) for (let i = start; i < end; i++) completed.add(i);
+    }
+    start = end;
+  }
+  let changed = false;
+  const result = messages.flatMap((message, i) => {
+    if (!completed.has(i)) return [message];
+    if (isToolResultRole(message.role) || hasKernelToolCallBlock(message.content)) {
+      changed = true;
+      return [];
+    }
+    if (message.role === "assistant" && Array.isArray(message.content)) {
+      const content = message.content.filter((block) => record(block).type !== "thinking");
+      if (content.length !== message.content.length) {
+        changed = true;
+        return content.length ? [{ ...message, content }] : [];
+      }
+    }
+    return [message];
+  });
+  return changed ? result : messages;
+}
+
 function approximateMessagesTokens(messages: OpenClawCompatibleMessage[]): number {
   return messages.reduce((sum, message) => sum + approximateMessageTokens(message), 0);
 }
@@ -3056,11 +3110,14 @@ export function buildContextEngineFactory(
       const normalizeWindow = 50;
       const recentMessages = selectTurnAlignedSourceSuffix(args.messages, normalizeWindow);
       const messages = normalizeKernelMessages(recentMessages);
-      const projectedSourceMessages = () => compactionProjectionActive
+      const rawProjectedSourceMessages = () => compactionProjectionActive
         ? cachedCompactedProjection
           ? args.messages.slice(cachedCompactedProjection.sourceStartIndex)
           : recentMessages
         : args.messages;
+      const projectedSourceMessages = () => cfg.historicalToolReplay === "recall"
+        ? projectHistoricalEvidenceForRecall(rawProjectedSourceMessages())
+        : rawProjectedSourceMessages();
       const buildAssembleFallback = (): OpenClawCompatibleAssembleResult => {
         if (!compactionProjectionActive) {
           return buildBudgetFallbackContext(args.messages, args.tokenBudget);
@@ -4135,5 +4192,24 @@ export function buildContextEngineFactory(
     },
   };
 
+  if (cfg.historicalToolReplay === "recall") {
+    const assemble = engine.assemble;
+    engine.assemble = async (args) => {
+      const result = await assemble(args);
+      if (isExcludedSession(args.sessionKey, args.sessionId)) return result;
+      // Apply at the return boundary too: daemon errors and budget fallbacks
+      // must not silently restore the historical payloads.
+      const messages = projectHistoricalEvidenceForRecall(result.messages);
+      if (messages === result.messages) return result;
+      return {
+        ...result,
+        messages,
+        estimatedTokens: Math.max(
+          approximateMessagesTokens(messages) + approximateTokenCount(result.systemPromptAddition),
+          result.estimatedTokens - approximateMessagesTokens(result.messages) + approximateMessagesTokens(messages),
+        ),
+      };
+    };
+  }
   return engine;
 }
