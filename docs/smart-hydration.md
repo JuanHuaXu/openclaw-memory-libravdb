@@ -13,8 +13,9 @@ Original messages are never rewritten. Index writes are idempotent across restar
 Semantic nomination uses `SearchText`, not lexical `RankCandidates`. The initial
 conservative score gate is 0.75 (a ranking score, not a probability). A production
 calibration corpus is still needed; low-scoring relevant queries can be missed.
-Implicit references such as "continue" are not guaranteed to resolve. Final
-answers and the active user/tool exchange remain in the host transcript.
+Low-information continuation prompts can reuse the active verified frame across
+social/no-op turns. Concrete new subjects displace it. Final answers and the
+active user/tool exchange remain in the host transcript.
 
 Evidence is explicitly partial: at most eight 1024-character spans, at most two
 per block, prioritizing tool results. Retrieval packs at most two frames and four
@@ -76,10 +77,14 @@ A frame expires before selection on the fifth subsequent turn without packed
 reuse. Selection on turn 4 after selection on turn 0 extends availability through
 turn 8; it expires on turn 9 unless selected again. Nomination, weak matches, and
 failed packets do not renew it. An empty greeting packet does not replay retained
-evidence. Retained IDs are refreshed through scoped `index.get` and reranked;
-normal nomination retains candidate capacity. Explicit references can still
-rediscover expired frames from durable storage. This does not yet solve the
-ranker's demonstrated paraphrase/implicit-continuation miss.
+evidence. A bounded dialogue classifier preserves the active frame for exact
+social acknowledgements and treats short continuation acts such as "go on" as an
+explicit reference. Substantive turns clear or replace that pointer. Transcript
+catch-up reconstructs the same state, and a topic epoch prevents late background
+capture from reviving displaced work. Repeated assembly within one user turn
+reuses one packet and classification decision. Retained IDs are refreshed through
+scoped `index.get`; normal nomination retains candidate capacity. Explicit
+references can still rediscover expired frames from durable storage.
 
 The host must call `clear()` on reset or dispose the instance on scope/task
 replacement. Concurrent calls/reset fail explicitly. The production owner keys

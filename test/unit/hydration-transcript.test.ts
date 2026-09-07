@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { TranscriptHydration, type TranscriptReader } from "../../src/hydration-transcript.js";
+import { classifyHydrationPrompt, TranscriptHydration, type TranscriptReader } from "../../src/hydration-transcript.js";
 import type { LibravDBClient } from "../../src/libravdb-client.js";
 
 const scope = { tenant: "fixture", session: "session", audience: "room" };
@@ -28,7 +28,10 @@ function fixture() {
       metadata.frame.scope = { audience, session, tenant };
       rows.set(r.id, { ...r, metadataJson: Buffer.from(JSON.stringify(metadata)) }); return { ok: true };
     },
-    async searchText(r: any) { return { results: [...rows.values()].map(row => ({ ...row, score: r.text === "hello" ? 0.4 : 0.85 })) }; },
+    async searchText(r: any) {
+      const relevant = /connection|tls|secure/i.test(r.text);
+      return { results: [...rows.values()].map(row => ({ ...row, score: relevant ? 0.85 : 0.4 })) };
+    },
     async listByMeta(r: any) { return { results: [...rows.values()].filter(row => row.id === r.value) }; },
   } as unknown as LibravDBClient;
   const make = (s = scope) => new TranscriptHydration(s, client, read, text => text);
@@ -70,4 +73,50 @@ test("a changed terminal answer invalidates the stored descriptor", async () => 
 test("social reasoning without a tool exchange is not indexed as research", async () => {
   const f = fixture(); f.entries.splice(1, 2);
   const session = f.make(); await session.refresh(); assert.equal(f.rows.size, 0); await session.close();
+});
+
+test("social turns preserve active work and low-information continuation restores it", async () => {
+  const f = fixture(); const session = f.make(); await session.refresh();
+  assert.equal((await session.hydrate("hello", "1", 16000)).context, "");
+  assert.match((await session.hydrate("continue", "2", 16000)).context, /expired yesterday/);
+  await session.close();
+});
+
+test("inactive discourse frames expire before the fifth later user turn", async () => {
+  const f = fixture(); const session = f.make(); await session.refresh();
+  for (const [key, text] of [["1", "hello"], ["2", "thanks"], ["3", "okay"], ["4", "cool"]])
+    assert.equal((await session.hydrate(text, key, 16000)).context, "");
+  assert.equal((await session.hydrate("continue", "5", 16000)).context, "");
+  await session.close();
+});
+
+test("a substantive topic change displaces active work", async () => {
+  const f = fixture(); const session = f.make(); await session.refresh();
+  assert.equal((await session.hydrate("hello", "1", 16000)).context, "");
+  assert.equal((await session.hydrate("start a database migration", "2", 16000)).context, "");
+  assert.equal((await session.hydrate("continue", "3", 16000)).context, "");
+  await session.close();
+});
+
+test("transcript catch-up does not reactivate tool work displaced by later discussion", async () => {
+  const f = fixture(); f.entries[4].message.content = "start a database migration";
+  const session = f.make(); await session.refresh();
+  assert.equal((await session.hydrate("continue", "1", 16000)).context, "");
+  await session.close();
+});
+
+test("continuation intent is a bounded dialogue class, not a substring match", () => {
+  assert.equal(classifyHydrationPrompt("Go on."), "continuation");
+  assert.equal(classifyHydrationPrompt("okay!"), "social");
+  assert.equal(classifyHydrationPrompt("Continue the database migration"), "substantive");
+  assert.equal(classifyHydrationPrompt("This is a great migration plan"), "substantive");
+});
+
+test("repeated assembly for one user turn reuses the first bounded decision", async () => {
+  const f = fixture(); const session = f.make(); await session.refresh();
+  const first = await session.hydrate("Why did the TLS connection fail?", "same-turn", 16000);
+  const repeated = await session.hydrate("hello", "same-turn", 16000);
+  assert.equal(repeated, first);
+  assert.match(repeated.context, /expired yesterday/);
+  await session.close();
 });
