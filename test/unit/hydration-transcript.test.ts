@@ -6,7 +6,7 @@ import type { LibravDBClient } from "../../src/libravdb-client.js";
 const scope = { tenant: "fixture", session: "session", audience: "room" };
 function fixture() {
   const rows = new Map<string, any>();
-  const entries = [
+  const entries: any[] = [
     { entryId: "u", message: { role: "user", content: "Investigate the connection failure" } },
     { entryId: "call", message: { role: "assistant", content: [{ type: "toolCall", id: "t", name: "lookup" }] } },
     { entryId: "result", message: { role: "toolResult", toolCallId: "t", content: [{ type: "text", text: "Certificate expired yesterday; renewed today." }] } },
@@ -61,6 +61,23 @@ test("cross-scope and replaced transcript anchors never supply hydration", async
 test("unresolved and mismatched tool protocols never become historical evidence", async () => {
   const f = fixture(); f.entries[2].message.toolCallId = "wrong";
   const session = f.make(); await session.refresh(); assert.equal(f.rows.size, 0); await session.close();
+});
+
+test("excluded nested-tool bookkeeping does not invalidate a completed tool turn", async () => {
+  const f = fixture();
+  f.entries.splice(2, 0, { entryId: "nested", message: { role: "custom", customType: "openclaw.nested-tool.v1",
+    display: true, excludeFromContext: true, content: "" } });
+  const session = f.make(); await session.refresh(); assert.equal(f.rows.size, 1); await session.close();
+});
+
+test("unknown or content-bearing custom messages still invalidate tool turns", async () => {
+  for (const message of [
+    { role: "custom", customType: "unknown", display: true, excludeFromContext: true, content: "" },
+    { role: "custom", customType: "openclaw.nested-tool.v1", display: true, excludeFromContext: true, content: "instructions" },
+  ]) {
+    const f = fixture(); f.entries.splice(2, 0, { entryId: "custom", message });
+    const session = f.make(); await session.refresh(); assert.equal(f.rows.size, 0); await session.close();
+  }
 });
 
 test("a changed terminal answer invalidates the stored descriptor", async () => {

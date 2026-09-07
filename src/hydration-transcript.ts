@@ -3,7 +3,8 @@ import type { HydrationFrame, HydrationScope, EvidenceArchive, HydrationIndex } 
 import { HydrationWorkingSet } from "./smart-hydration.js";
 import type { LibravDBClient } from "./libravdb-client.js";
 
-type Message = { role: string; content: unknown; stopReason?: string; toolCallId?: string };
+type Message = { role: string; content: unknown; stopReason?: string; toolCallId?: string;
+  customType?: string; display?: boolean; excludeFromContext?: boolean };
 type Entry = { entryId: string; message: Message; createdAt?: string };
 type Page = { kind: string; cursor?: string; entries?: Entry[]; hasMore?: boolean };
 export type TranscriptReader = (params: { sessionId: string; sessionKey: string; cursor?: string; maxBytes: number; maxMessages: number }) => Promise<Page>;
@@ -14,6 +15,9 @@ const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 const blocks = (m: Message): Record<string, unknown>[] => Array.isArray(m.content) ? m.content : [{ type: "text", text: typeof m.content === "string" ? m.content : "" }];
 const blockText = (b: Record<string, unknown>) => typeof b.thinking === "string" ? b.thinking : typeof b.text === "string" ? b.text : "";
 const visibleText = (m: Message) => blocks(m).filter(b => b.type === "text").map(blockText).join("\n");
+const isExcludedNestedToolActivity = (m: Message) => m.role === "custom" &&
+  m.customType === "openclaw.nested-tool.v1" && m.display === true &&
+  m.excludeFromContext === true && m.content === "";
 const PAGE_BYTES = 1024 * 1024;
 const SOCIAL = new Set(["hello", "hi", "hey", "thanks", "thank you", "ok", "okay", "got it", "sounds good", "cool", "great", "nice"]);
 const CONTINUATION = new Set(["continue", "go on", "keep going", "carry on", "proceed", "resume", "more", "tell me more", "what happened next", "and then", "finish it", "finish that", "back to that", "pick up where we left off"]);
@@ -116,6 +120,8 @@ export class TranscriptHydration {
       }
       else if (message.role === "toolResult" || message.role === "tool") {
         if (!message.toolCallId || !open.delete(message.toolCallId)) return;
+      } else if (isExcludedNestedToolActivity(message)) {
+        continue;
       } else if (message.role !== "user") return;
     }
     if (open.size || !seen.size || !visibleText(last.message).trim()) return;
