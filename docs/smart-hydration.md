@@ -24,8 +24,9 @@ transcript anchors are validated, and each returned span is hash checked. A
 missing or invalid anchor never causes broad replay. This is bounded source
 evidence retrieval, not the full EventFrame forecasting/learning system.
 
-Background catch-up reads at most 256 bounded single-message pages per trigger;
-later turns continue catch-up. It does not block the model waiting for ingestion.
+Background catch-up reads paced batches of at most 256 bounded single-message
+pages and schedules another batch while a tail remains. It does not require more
+user turns to reach recent work or block the model waiting for ingestion.
 The host retains at most 64 session adapters per runtime, evicting idle adapters
 after 30 minutes when admitting another session. Post-tool continuations reuse
 the same turn's packet; hydration never modifies active tool protocol.

@@ -34,6 +34,7 @@ export class TranscriptHydration {
   private cursor?: string;
   private pending: Located[] = [];
   private refreshTask?: Promise<void>;
+  private catchupTimer?: ReturnType<typeof setTimeout>;
   private closed = false;
   private turn = 0;
   private turnKey?: string;
@@ -52,18 +53,28 @@ export class TranscriptHydration {
     return this.read({ sessionId: this.scope.session, sessionKey: this.scope.audience, cursor, maxMessages: 1, maxBytes: PAGE_BYTES });
   }
 
-  async close() { this.closed = true; await this.refreshTask; }
+  async close() {
+    this.closed = true;
+    if (this.catchupTimer) clearTimeout(this.catchupTimer);
+    await this.refreshTask;
+  }
 
   refresh(): Promise<void> {
     if (this.closed) return Promise.resolve();
     if (this.refreshTask) return this.refreshTask;
+    if (this.catchupTimer) { clearTimeout(this.catchupTimer); this.catchupTimer = undefined; }
     const task = this.capture(this.topicEpoch);
-    this.refreshTask = task;
-    void task.finally(() => { if (this.refreshTask === task) this.refreshTask = undefined; }).catch(() => {});
-    return task;
+    const settled = task.then(more => {
+      if (more && !this.closed) this.catchupTimer = setTimeout(() => {
+        this.catchupTimer = undefined;
+        void this.refresh().catch(() => {});
+      }, 250);
+    }).finally(() => { if (this.refreshTask === settled) this.refreshTask = undefined; });
+    this.refreshTask = settled;
+    return settled;
   }
 
-  private async capture(topicEpoch: number) {
+  private async capture(topicEpoch: number): Promise<boolean> {
     const ensured = await this.client.ensureCollections({ collections: [this.collection] }, { timeoutMs: 2000 });
     if (!ensured.ok) throw new Error("Hydration index unavailable");
     let active = this.active;
@@ -71,8 +82,8 @@ export class TranscriptHydration {
     // Bounded background catch-up. Future calls resume the cursor.
     for (let n = 0; n < 256 && !this.closed; n++) {
       const page = await this.page(this.cursor);
-      if (page.kind === "reset") { this.cursor = page.cursor; this.pending = []; return; }
-      if (page.kind !== "page" || !page.entries?.length) { commit(); return; }
+      if (page.kind === "reset") { this.cursor = page.cursor; this.pending = []; return false; }
+      if (page.kind !== "page" || !page.entries?.length) { commit(); return false; }
       const entry = page.entries[0];
       if (entry.message.role === "user") {
         if (this.pending.length) {
@@ -86,9 +97,10 @@ export class TranscriptHydration {
       // Oversized turns remain available in original storage, never partly indexed.
       if (this.pending.length > 64 || Buffer.byteLength(JSON.stringify(this.pending)) > 2 * PAGE_BYTES) this.pending = [];
       this.cursor = page.cursor;
-      if (!page.hasMore) { commit(); return; }
+      if (!page.hasMore) { commit(); return false; }
     }
     commit();
+    return !this.closed;
   }
 
   private async store(turn: Located[]): Promise<string | undefined> {

@@ -120,3 +120,16 @@ test("repeated assembly for one user turn reuses the first bounded decision", as
   assert.match(repeated.context, /expired yesterday/);
   await session.close();
 });
+
+test("long transcript catch-up reaches recent work without requiring user turns", async () => {
+  const f = fixture();
+  f.entries.unshift(...Array.from({ length: 260 }, (_, i) => ({
+    entryId: `old-${i}`, message: { role: i % 2 ? "assistant" : "user", content: i % 2 ? "ack" : `old subject ${i}` },
+  })));
+  const session = f.make(); await session.refresh();
+  for (let attempt = 0; attempt < 10 && f.rows.size === 0; attempt++)
+    await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(f.rows.size, 1);
+  assert.match((await session.hydrate("continue", "1", 16000)).context, /expired yesterday/);
+  await session.close();
+});
