@@ -31,3 +31,24 @@ of an affected production transcript reduced serialized history from 325,592
 to 25,932 characters (56 to 36 messages), omitting 12 completed tool results
 and 83,195 thinking characters. These are transcript measurements, not wire
 token counts or end-to-end latency guarantees.
+
+Production Gateway validation after archive installation and restart:
+
+| Case | Gateway duration | Backend prefill | Backend input processed |
+| --- | ---: | ---: | ---: |
+| Previous greeting (before rescue) | 45.08s submitted-to-completed | 40.33s | 102,720 |
+| First rescued greeting | 12.932s agent duration | 8.59s | 29,305 |
+| Repeat greeting | 1.554s agent duration | 0.453s | 113 uncached tokens |
+
+The repeat retained a roughly 29k-token context; 113 is incremental prefill,
+not total context. Both greetings returned useful final text without tools.
+These were no-delivery Gateway turns using the affected Discord session, not
+Discord inbound/outbound transport measurements. Cold performance still
+exceeds a five-second target. Base instructions and recall injection remain;
+the rescue does not claim to solve every remaining latency source.
+
+A subsequent Gateway request to look up prior response-latency work invoked
+`libravdb_memory_search` through `tool_call`, completed in two assistant turns,
+and returned a final answer without repetition (24.595s). This confirms the
+live tool-continuation path, not a general sub-five-second tool latency claim.
+Validation passed 281 unit tests and 55 integration tests with no skips.
