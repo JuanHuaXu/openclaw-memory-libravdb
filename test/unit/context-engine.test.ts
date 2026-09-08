@@ -135,6 +135,32 @@ test("replay accounting includes reasoning and arguments without rewriting histo
   assert.equal(normalizeAssembleResult({ estimatedTokens: 100000 }, messages).estimatedTokens, 100000);
 });
 
+test("replay accounting tolerates non-JSON tool arguments without changing them", () => {
+  const cyclic: Record<string, unknown> = {};
+  cyclic.self = cyclic;
+  for (const args of [cyclic, { count: 1n }]) {
+    const messages = [{ role: "assistant", content: [{ type: "toolCall", id: "c", name: "lookup", arguments: args }] }];
+    const result = normalizeAssembleResult({ estimatedTokens: 0 }, messages);
+    assert.equal(result.messages, messages);
+    assert.ok(Number.isFinite(result.estimatedTokens) && result.estimatedTokens > 0);
+  }
+});
+
+test("pressure enforcement bounds tool-only projections without splitting protocol", async () => {
+  for (const shape of ["result", "call", "pair"]) {
+    const engine = buildContextEngineFactory(fakeRuntime(new FakeClient()), { userId: "fixed-user", compactThreshold: 100000 });
+    const messages = [
+      ...(shape !== "result" ? [{ role: "assistant", content: [{ type: "toolCall", id: "c", name: "lookup", arguments: { text: "x".repeat(18000) } }] }] : []),
+      ...(shape !== "call" ? [{ role: "toolResult", toolCallId: "c", content: "evidence ".repeat(2000) }] : []),
+    ];
+    const control = await engine.assemble({ sessionId: `no-user-control-${shape}`, messages, tokenBudget: 100000 });
+    assert.deepEqual(control.messages, messages, "no-user input is not unconditionally dropped");
+    const result = await engine.assemble({ sessionId: `no-user-${shape}`, messages, tokenBudget: 1000 });
+    assert.deepEqual(result.messages, []);
+    assert.ok(result.estimatedTokens <= 1000);
+  }
+});
+
 test("predictive pressure includes old tool evidence omitted from daemon ingestion", async () => {
   const client = new FakeClient();
   const engine = buildContextEngineFactory(fakeRuntime(client), { userId: "fixed-user", compactThreshold: 1000 });

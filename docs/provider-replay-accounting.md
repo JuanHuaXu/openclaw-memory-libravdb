@@ -13,6 +13,10 @@ projection contains tool protocol, budget enforcement uses the existing
 turn-aligned enforcer. It keeps the current user/call/result bundle together,
 even if that bundle alone exceeds budget, and reports that pressure to the host
 instead of dropping one side of the exchange.
+An oversized projection with no user boundary is dropped as a whole; its system
+addition is bounded separately. Under-budget tool-only inputs are unchanged.
+Tool argument estimation uses the existing guarded block serializer; cyclic or
+BigInt arguments do not throw from accounting or rewrite the source objects.
 
 This change does not introduce an excerpt allowance, delete reasoning, classify
 completed tasks, change daemon ingestion, or implement tool-result rehydration.
@@ -22,7 +26,7 @@ that all prompt-cache misses or slow greetings are fixed.
 
 ## Validation
 
-`pnpm check` passed: plugin inspector PASS, 279 unit tests and 55 integration
+`pnpm check` passed: plugin inspector PASS, 281 unit tests and 55 integration
 tests, zero failures or skips. `pnpm build` passed. The three new regressions
 fail on unpatched upstream and pass on the fix. In a synthetic zero-estimate
 control, a 90,000-character result remains 90,000 characters and the same source
@@ -43,17 +47,26 @@ The new tests in `test/unit/context-engine.test.ts` cover:
    With reported usage zero, predictive compaction must still see the pressure.
 3. An active tool exchange that exceeds budget by itself. It must not lose its
    result while retaining its call, or report that the exchange fits.
+4. Cyclic and BigInt tool arguments: finite estimates and unchanged source data.
+5. Oversized no-user tool-call, tool-result, and paired projections are bounded,
+   while under-budget versions are preserved.
 
-All three fail against upstream `c3570e1` (v1.10.25). The baseline run uses the
+The first three fail against upstream `c3570e1` (v1.10.25). The baseline run uses the
 new tests with only `src/context-engine.ts` replaced in the generated test build
 by a transpilation of that commit's source. A fresh TypeScript build restores
 the patched implementation before running the full tests.
+
+Review regressions were tested against PR head `7db783f` before fixing it:
+cyclic arguments threw `TypeError: Converting circular structure to JSON`, and
+an oversized tool-result-only projection was returned intact. Both fail-before
+tests pass after the review corrections. These are local adapter tests, not a
+new live Gateway or model performance experiment.
 
 ## Anonymized incident evidence
 
 A short greeting in an existing research session resulted in 101,450 processed
 prompt tokens: 52,345 ms prompt evaluation versus 946 ms generation (71 tokens).
-OpenClaw's prompt-submitted to model-completed interval was 57,301 ms, with no
+OpenClaw's interval from prompt submission to model completion was 57,301 ms, with no
 new tool calls. Its usage fields were zero. This is evidence of replay pressure,
 not proof that this patch reduces production latency to a particular target.
 

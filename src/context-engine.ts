@@ -733,7 +733,7 @@ function approximateMessageTokens(message: OpenClawCompatibleMessage): number {
         if (!block || typeof block !== "object") return "";
         const value = block as Record<string, unknown>;
         if (value.type === "toolCall") {
-          return JSON.stringify(value.arguments ?? {}) + String(value.name ?? "");
+          return stringifyKernelBlock(value);
         }
         return typeof value.text === "string" ? value.text
           : typeof value.thinking === "string" ? value.thinking : "";
@@ -1138,9 +1138,20 @@ function enforceCompactedProjectionBudgetInvariant(
   }
 
   const lastUserIndex = findLastUserMessageIndex(result.messages);
-  const mandatoryMessages = lastUserIndex >= 0
-    ? result.messages.slice(lastUserIndex)
-    : result.messages;
+  // Without a user boundary, no live turn can be protected. Drop the entire
+  // oversized projection rather than orphaning calls/results by suffix trimming.
+  if (lastUserIndex < 0) {
+    const systemPromptAddition = truncateSystemPromptAdditionToTokenBudget(
+      result.systemPromptAddition, effectiveBudget,
+    );
+    return {
+      ...result,
+      messages: [],
+      systemPromptAddition,
+      estimatedTokens: approximateTokenCount(systemPromptAddition),
+    };
+  }
+  const mandatoryMessages = result.messages.slice(lastUserIndex);
   const mandatoryTokens = approximateMessagesTokens(mandatoryMessages);
   const systemPromptBudget = Math.max(0, effectiveBudget - mandatoryTokens);
   const systemPromptAddition = truncateSystemPromptAdditionToTokenBudget(
