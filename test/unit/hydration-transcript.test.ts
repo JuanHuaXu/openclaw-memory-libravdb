@@ -144,6 +144,7 @@ test("long transcript catch-up reaches recent work without requiring user turns"
     entryId: `old-${i}`, message: { role: i % 2 ? "assistant" : "user", content: i % 2 ? "ack" : `old subject ${i}` },
   })));
   const session = f.make(); await session.refresh();
+  assert.equal(f.rows.size, 0, "the first page batch does not reach the tool frame");
   for (let attempt = 0; attempt < 10 && f.rows.size === 0; attempt++)
     await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(f.rows.size, 1);

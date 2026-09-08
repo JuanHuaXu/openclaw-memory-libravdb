@@ -143,6 +143,19 @@ test("recall-only history keeps final answers and exact live protocol without mu
   ]) assert.equal(projectHistoricalEvidenceForRecall(malformed), malformed, "unresolved and current turns stay exact");
 });
 
+test("recall projection requires real terminal text and tolerates unknown content", () => {
+  for (const content of [undefined, null, {}, 42, false, [], [{ type: "thinking", thinking: "pending" }], "", "  "]) {
+    const messages = [
+      { role: "user", content: "Research" },
+      { role: "assistant", content: [{ type: "toolCall", id: "c", name: "lookup", arguments: {} }] },
+      { role: "toolResult", toolCallId: "c", content: "evidence" },
+      { role: "assistant", stopReason: "stop", content },
+      { role: "user", content: "hello" },
+    ];
+    assert.equal(projectHistoricalEvidenceForRecall(messages as Parameters<typeof projectHistoricalEvidenceForRecall>[0]), messages);
+  }
+});
+
 test("recall-only assembly retains retrieved memory and projects daemon-error fallbacks", async () => {
   const messages = [
     { role: "user", content: "Research" },

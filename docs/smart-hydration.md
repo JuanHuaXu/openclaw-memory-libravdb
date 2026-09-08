@@ -158,6 +158,11 @@ For a Gateway test, export a session report using the test Gateway's
 session: `deliver:false` prevents channel delivery but still persists transcript
 turns and can trigger ingestion. Clean that test session using the host's normal
 session lifecycle after collecting evidence.
+`PROBE_OUTPUT` must be a new path: the probe reserves it with mode `0600` and
+rejects existing files or symlinks before invoking the Gateway. The production
+adapter probe waits up to 30 seconds for a valid tool-backed positive control
+while transcript catch-up runs; it does not treat the initial page batch as a
+complete index. Optional obsolete-frame cleanup occurs only after that scan.
 
 Local production logs recorded a greeting with zero frames/reads/bytes in 10 ms,
 and related/continuation turns with one frame and 5,365 bytes in 7-51 ms. These
@@ -169,7 +174,7 @@ this feature. A controlled end-to-end A/B on an identical session snapshot and a
 held-out retrieval-quality corpus remain outstanding.
 
 Validation on this isolated branch (2026-09-07): build and typecheck passed;
-310 unit tests and 55 integration tests passed, with zero skips. Plugin Inspector
+311 unit tests, 55 integration tests, and 3 probe-script tests passed, with zero skips. Plugin Inspector
 passed with one dependency-install coverage gap; this is not a cold-install test.
 The real configured daemon, using synthetic transcript-reader entries, returned:
 
@@ -183,3 +188,14 @@ The adapter was recreated between indexing and retrieval. Both positive queries
 recovered the certificate-expiration evidence; synthetic records were deleted
 afterward. These are single adapter measurements with a real daemon and a fake
 transcript reader, not Gateway or model response times.
+
+Review corrections: the terminal-content regression failed on `dfde6a1` with
+`Cannot read properties of undefined (reading 'some')`. Non-array terminal
+content now leaves the unresolved exchange intact instead of throwing; valid
+final-text projection and live-tool preservation remain covered. The old output
+write reproduced mode `0644` on an existing file despite requesting `0600`.
+Probe tests cover secure creation, existing-file/symlink rejection before a
+Gateway call, delayed positive-control availability, deadlines, and RPC errors.
+The transcript test also confirms that a frame beyond the initial 256-page
+batch appears during background catch-up. No new production performance or
+delivery result is claimed by these local regression tests.

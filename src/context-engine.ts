@@ -748,7 +748,7 @@ export function projectHistoricalEvidenceForRecall(messages: OpenClawCompatibleM
     // A later user turn plus an explicit final answer closes the protocol.
     if (tail?.role === "assistant" && tail.stopReason === "stop" &&
         !hasKernelToolCallBlock(tail.content) &&
-        (typeof tail.content === "string" ? tail.content.trim() : tail.content.some((value) => {
+        (typeof tail.content === "string" ? tail.content.trim() : Array.isArray(tail.content) && tail.content.some((value) => {
           const b = record(value);
           return b.type === "text" && typeof b.text === "string" && b.text.trim();
         }))) {
