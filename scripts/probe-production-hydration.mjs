@@ -12,7 +12,9 @@ const { readSessionTranscriptVisibleMessageDelta } = await import(pathToFileURL(
 const config = JSON.parse(await fs.readFile(process.env.BENCH_CONFIG, "utf8"));
 const cfg = config.plugins.entries["libravdb-memory"].config;
 const sessions = JSON.parse(await fs.readFile(process.env.SESSIONS_REPORT, "utf8"));
-const session = sessions.sessions.find(s => s.channel === "discord");
+const sessionKey = process.env.PROBE_SESSION_KEY;
+if (!sessionKey) throw new Error("PROBE_SESSION_KEY must name an explicit test session");
+const session = sessions.sessions.find(s => s.key === sessionKey);
 if (!session) throw new Error("No test session selected");
 const runtime = createPluginRuntime(cfg, { warn() {}, error() {} });
 let adapter;

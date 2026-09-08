@@ -3,8 +3,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 const sessions = JSON.parse(await fs.readFile(process.env.SESSIONS_REPORT, "utf8"));
-const channel = process.env.PROBE_CHANNEL ?? "discord";
-const session = sessions.sessions.find(s => s.channel === channel);
+const sessionKey = process.env.PROBE_SESSION_KEY;
+if (!sessionKey) throw new Error("PROBE_SESSION_KEY must name an explicit disposable test session");
+const session = sessions.sessions.find(s => s.key === sessionKey);
 if (!session) throw new Error("Missing selected session");
 const params = { sessionKey: session.key, sessionId: session.sessionId,
   message: process.argv[2] ?? "hello", deliver: false, disableMessageTool: true, timeout: 120, idempotencyKey: randomUUID() };

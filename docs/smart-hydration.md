@@ -1,6 +1,6 @@
 # Smart history hydration: TypeScript serving core
 
-Status: production adapter available behind `historicalToolReplay=smart`.
+Status: opt-in adapter; deployed locally behind `historicalToolReplay=smart`.
 `recall` remains the immediate configuration rollback.
 
 The adapter uses OpenClaw's scoped, generation-aware transcript SDK, including
@@ -129,3 +129,57 @@ controls; why/continue with recent context; exact evidence recovery after restar
 wrong-participant and stale-correction controls; live post-tool continuation; and
 held-out answer-quality plus cold/warm latency comparison against full replay and
 the deployed rescue. Component benchmarks do not establish live Gateway latency.
+
+## Branch scope and reproduction
+
+This feature branch is based on upstream v1.10.25 and excludes the provider-replay
+pressure changes in PR #387. It includes the recall-only projection required to
+omit completed historical evidence before selectively restoring verified spans.
+The default remains `full`; configure `plugins.entries.libravdb-memory.config.historicalToolReplay`
+as `smart` to opt in, `recall` for omission without hydration, or `full` to restore
+the existing replay policy. No tool-schema or llama.cpp template changes are part
+of this feature.
+
+Run `pnpm build` and `pnpm check` for the build, unit suite, and integration suite.
+For real indexed synthetic evidence, run:
+
+```sh
+BENCH_CONFIG=/path/to/test-openclaw.json node scripts/probe-hydration-adapter.mjs
+```
+
+This probe writes to a random scoped collection, tests greeting exclusion and two
+related queries after adapter recreation, and deletes inserted records in its
+cleanup block. The daemon must support the configured transport and SearchText.
+
+For a Gateway test, export a session report using the test Gateway's
+`gateway call sessions.list --json`, then set `SESSIONS_REPORT`,
+`PROBE_SESSION_KEY`, `GATEWAY_CLI`, and `PROBE_OUTPUT` before running
+`node scripts/probe-hydration-gateway.mjs 'hello'`. Use an explicitly disposable
+session: `deliver:false` prevents channel delivery but still persists transcript
+turns and can trigger ingestion. Clean that test session using the host's normal
+session lifecycle after collecting evidence.
+
+Local production logs recorded a greeting with zero frames/reads/bytes in 10 ms,
+and related/continuation turns with one frame and 5,365 bytes in 7-51 ms. These
+observations came from the deployed stack including PR #387; they are not isolated
+latency measurements of this branch. Likewise, the historical recall-only timings
+in `historical-tool-recall.md` describe that projection, not semantic hydration.
+Later stable-tool-schema and prompt-cache experiments must not be attributed to
+this feature. A controlled end-to-end A/B on an identical session snapshot and a
+held-out retrieval-quality corpus remain outstanding.
+
+Validation on this isolated branch (2026-09-07): build and typecheck passed;
+310 unit tests and 55 integration tests passed, with zero skips. Plugin Inspector
+passed with one dependency-install coverage gap; this is not a cold-install test.
+The real configured daemon, using synthetic transcript-reader entries, returned:
+
+| Query | Indexed score | Hydrated frames / reads | Context bytes | Hydration time |
+| --- | ---: | ---: | ---: | ---: |
+| hello | 0.414 | 0 / 0 | 0 | 0.12 ms |
+| Why did the secure connection fail? | 0.838 | 1 / 1 | 1,610 | 1.38 ms |
+| What repaired our encrypted client connection? | 0.812 | 1 / 1 | 1,610 | 2.53 ms |
+
+The adapter was recreated between indexing and retrieval. Both positive queries
+recovered the certificate-expiration evidence; synthetic records were deleted
+afterward. These are single adapter measurements with a real daemon and a fake
+transcript reader, not Gateway or model response times.
