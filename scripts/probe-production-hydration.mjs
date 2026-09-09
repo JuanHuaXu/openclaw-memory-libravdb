@@ -29,11 +29,11 @@ try {
   console.log(JSON.stringify({ status: result.status, frames: result.selectedIds.length, bytes: Buffer.byteLength(result.context), ms: result.elapsedMs }));
   assert.equal(result.context, "", "Greeting must not hydrate research");
   const { query, ids, obsolete } = await waitForPositiveControl(async (signal) => {
-    const listed = await client.listCollection({ collection: adapter.collection });
+    const listed = await client.listCollection({ collection: adapter.collection }, { signal });
     const obsolete = []; let query;
     for (const id of listed.ids) {
       signal.throwIfAborted();
-      const r = await client.listByMeta({ collection: adapter.collection, key: "frameId", value: id });
+      const r = await client.listByMeta({ collection: adapter.collection, key: "frameId", value: id }, { signal });
       signal.throwIfAborted();
       const record = r.results[0]; if (!record) continue;
       const meta = JSON.parse(Buffer.from(record.metadataJson).toString());

@@ -174,7 +174,7 @@ this feature. A controlled end-to-end A/B on an identical session snapshot and a
 held-out retrieval-quality corpus remain outstanding.
 
 Validation on this isolated branch (2026-09-07): build and typecheck passed;
-311 unit tests, 55 integration tests, and 3 probe-script tests passed, with zero skips. Plugin Inspector
+312 unit tests, 55 integration tests, and 4 probe-script tests passed, with zero skips. Plugin Inspector
 passed with one dependency-install coverage gap; this is not a cold-install test.
 The real configured daemon, using synthetic transcript-reader entries, returned:
 
@@ -199,3 +199,13 @@ Gateway call, delayed positive-control availability, deadlines, and RPC errors.
 The transcript test also confirms that a frame beyond the initial 256-page
 batch appears during background catch-up. No new production performance or
 delivery result is claimed by these local regression tests.
+
+Follow-up probe cancellation review: on `dd668d7`, the client forwarding test
+observed missing options at `listCollection`, while the polling-sleep timeout
+reported `AbortError` rather than the probe deadline. The probe now forwards its
+signal to both collection and metadata RPCs; `listCollection` accepts optional
+`CallOptions` like `listByMeta`. Deadline errors are consistent during reads and
+sleep, and unrelated RPC errors still propagate unchanged. Tests verify option
+forwarding and that a cooperative pending read receives cancellation. This is
+diagnostic-probe cleanup, not a change to live hydration selection or a new
+production crash finding.

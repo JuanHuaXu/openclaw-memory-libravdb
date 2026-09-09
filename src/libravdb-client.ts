@@ -489,9 +489,9 @@ export class LibravDBClient {
     return { results: allResults } as SearchTextResponse;
   }
 
-  async listCollection(req: PartialMessage<ListCollectionRequest>): Promise<ListCollectionResponse> {
+  async listCollection(req: PartialMessage<ListCollectionRequest>, opts?: CallOptions): Promise<ListCollectionResponse> {
     this.guardOpen();
-    return this.client.listCollection(req);
+    return this.client.listCollection(req, opts);
   }
 
   // ── Memory ───────────────────────────────────────────────────────

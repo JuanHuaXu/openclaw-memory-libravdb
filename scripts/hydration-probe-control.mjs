@@ -15,6 +15,9 @@ export async function waitForPositiveControl(scan, timeoutMs = 30000, pollMs = 1
       if (result) return result;
       await sleep(pollMs, undefined, { signal: controller.signal });
     }
+  } catch (error) {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    throw error;
   } finally {
     clearTimeout(timeout);
     controller.abort();

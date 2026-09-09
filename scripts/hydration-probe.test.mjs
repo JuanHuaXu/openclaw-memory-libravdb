@@ -41,7 +41,16 @@ test("positive control waits for catch-up instead of failing on an empty initial
 });
 
 test("positive control bounds empty and stalled scans and propagates real failures", async () => {
-  await assert.rejects(waitForPositiveControl(async () => undefined, 20, 1));
+  await assert.rejects(waitForPositiveControl(async () => undefined, 20, 1000), /probe deadline/);
   await assert.rejects(waitForPositiveControl(() => new Promise(() => {}), 20, 1), /deadline/);
   await assert.rejects(waitForPositiveControl(async () => { throw new Error("RPC failed"); }), /RPC failed/);
+});
+
+test("probe deadline cancels an active cooperative read", async () => {
+  let active = 0;
+  await assert.rejects(waitForPositiveControl(signal => new Promise((_, reject) => {
+    active++;
+    signal.addEventListener("abort", () => { active--; reject(signal.reason); }, { once: true });
+  }), 20, 1), /probe deadline/);
+  assert.equal(active, 0);
 });
