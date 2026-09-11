@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { HydrationFrame, HydrationScope, EvidenceArchive, HydrationIndex } from "./smart-hydration.js";
 import { HydrationWorkingSet } from "./smart-hydration.js";
 import type { LibravDBClient } from "./libravdb-client.js";
@@ -19,6 +19,15 @@ const isExcludedNestedToolActivity = (m: Message) => m.role === "custom" &&
   m.customType === "openclaw.nested-tool.v1" && m.display === true &&
   m.excludeFromContext === true && m.content === "";
 const PAGE_BYTES = 1024 * 1024;
+const messageKeys = new WeakMap<object, string>();
+/** Prefer host identity metadata. Without it, never equate separately allocated messages by text. */
+export function hydrationTurnKey(message: object): string {
+  const value = message as { id?: unknown };
+  if (typeof value.id === "string" && value.id) return `id:${value.id}`;
+  let key = messageKeys.get(message);
+  if (!key) { key = randomUUID(); messageKeys.set(message, key); }
+  return key;
+}
 const SOCIAL = new Set(["hello", "hi", "hey", "thanks", "thank you", "ok", "okay", "got it", "sounds good", "cool", "great", "nice"]);
 const CONTINUATION = new Set(["continue", "go on", "keep going", "carry on", "proceed", "resume", "more", "tell me more", "what happened next", "and then", "finish it", "finish that", "back to that", "pick up where we left off"]);
 
@@ -33,7 +42,7 @@ export function classifyHydrationPrompt(text: string): HydrationPromptKind {
 
 /** Canonical transcript pointers; the vector collection holds only compact descriptors. */
 export class TranscriptHydration {
-  readonly working: HydrationWorkingSet;
+  private working: HydrationWorkingSet;
   readonly collection: string;
   private cursor?: string;
   private pending: Located[] = [];
@@ -45,7 +54,15 @@ export class TranscriptHydration {
   private topicEpoch = 0;
   private active?: { id: string; lastUsedTurn: number };
   private turnInput?: { key: string; text: string; kind: HydrationPromptKind };
-  private lastHydration?: { turnKey: string; bytes: number; packet: Awaited<ReturnType<HydrationWorkingSet["hydrate"]>> };
+  private generation = 0;
+
+  private reset(cursor?: string) {
+    this.generation++; this.topicEpoch++;
+    this.cursor = cursor; this.pending = []; this.active = undefined;
+    this.turnKey = undefined; this.turnInput = undefined;
+    // Replace rather than clear: an older hydration may still be awaiting I/O.
+    this.working = new HydrationWorkingSet(this.scope);
+  }
 
   constructor(private readonly scope: HydrationScope, private readonly client: LibravDBClient,
     private readonly read: TranscriptReader, private readonly normalize: (text: string) => string) {
@@ -79,6 +96,7 @@ export class TranscriptHydration {
   }
 
   private async capture(topicEpoch: number): Promise<boolean> {
+    const generation = this.generation;
     const ensured = await this.client.ensureCollections({ collections: [this.collection] }, { timeoutMs: 2000 });
     if (!ensured.ok) throw new Error("Hydration index unavailable");
     let active = this.active;
@@ -86,12 +104,14 @@ export class TranscriptHydration {
     // Bounded background catch-up. Future calls resume the cursor.
     for (let n = 0; n < 256 && !this.closed; n++) {
       const page = await this.page(this.cursor);
-      if (page.kind === "reset") { this.cursor = page.cursor; this.pending = []; return false; }
+      if (generation !== this.generation) return false;
+      if (page.kind === "reset") { this.reset(page.cursor); return false; }
       if (page.kind !== "page" || !page.entries?.length) { commit(); return false; }
       const entry = page.entries[0];
       if (entry.message.role === "user") {
         if (this.pending.length) {
           const id = await this.store(this.pending);
+          if (generation !== this.generation) return false;
           if (id) active = { id, lastUsedTurn: this.turn };
         }
         if (classifyHydrationPrompt(this.normalize(visibleText(entry.message))) === "substantive") active = undefined;
@@ -166,17 +186,26 @@ export class TranscriptHydration {
   }
 
   async hydrate(text: string, turnKey: string, byteBudget: number) {
+    const started = performance.now();
+    const empty = () => ({ context: "", selectedIds: [] as string[], hydratedIds: [] as string[], missingIds: [] as string[], deferredIds: [] as string[], status: "unavailable" as const, elapsedMs: performance.now() - started });
     const newTurn = this.turnKey !== turnKey;
-    if (!newTurn && this.lastHydration?.turnKey === turnKey && this.lastHydration.bytes <= byteBudget)
-      return this.lastHydration.packet;
     if (newTurn) {
-      this.turn++; this.turnKey = turnKey; this.lastHydration = undefined;
+      this.turn++; this.turnKey = turnKey;
       this.turnInput = { key: turnKey, text, kind: classifyHydrationPrompt(text) };
     }
     const turnInput = this.turnInput?.key === turnKey ? this.turnInput : { key: turnKey, text, kind: classifyHydrationPrompt(text) };
     const kind = turnInput.kind;
-    if (newTurn && kind === "substantive") this.topicEpoch++;
+    if (newTurn && kind === "substantive") { this.topicEpoch++; this.active = undefined; }
     if (this.active && this.turn - this.active.lastUsedTurn >= 5) this.active = undefined;
+    const generation = this.generation;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const head = await Promise.race([
+      this.page(this.cursor),
+      new Promise<Page>(resolve => { timer = setTimeout(() => resolve({ kind: "unavailable" }), 2000); }),
+    ]).finally(() => { if (timer) clearTimeout(timer); });
+    if (generation !== this.generation || this.turnKey !== turnKey) return empty();
+    if (head.kind === "reset") { this.reset(head.cursor); return empty(); }
+    if (head.kind !== "page") return empty();
     const continuityId = kind === "continuation" ? this.active?.id : undefined;
     const stored = new Map<string, StoredFrame>(); const scores = new Map<string, number>();
     const parse = async (r: { id: string; metadataJson: Uint8Array }): Promise<HydrationFrame | undefined> => {
@@ -226,12 +255,12 @@ export class TranscriptHydration {
     } };
     const packet = await this.working.hydrate({ scope: this.scope, turn: this.turn,
       query: { text: turnInput.text, recentFrames: [], referencedIds: continuityId ? [continuityId] : [] },
-      asOf: Date.now(), policy: { candidates: 10, frames: 2, evidenceReads: 4, byteBudget, timeoutMs: 2000, minimumScore: 0.75 }, index, archive });
+      asOf: Date.now(), policy: { candidates: 10, frames: 2, evidenceReads: 4, byteBudget, timeoutMs: Math.max(1, Math.floor(2000 - (performance.now() - started))), minimumScore: 0.75 }, index, archive });
+    if (generation !== this.generation || this.turnKey !== turnKey) return empty();
     if (kind === "substantive") this.active = packet.context && packet.selectedIds.length
       ? { id: packet.selectedIds[0], lastUsedTurn: this.turn } : undefined;
     else if (kind === "continuation" && continuityId && packet.context && packet.selectedIds.includes(continuityId))
       this.active = { id: continuityId, lastUsedTurn: this.turn };
-    if (packet.status === "ok") this.lastHydration = { turnKey, bytes: Buffer.byteLength(packet.context), packet };
-    return packet;
+    return { ...packet, elapsedMs: performance.now() - started };
   }
 }

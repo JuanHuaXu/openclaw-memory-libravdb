@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyHydrationPrompt, TranscriptHydration, type TranscriptReader } from "../../src/hydration-transcript.js";
+import { classifyHydrationPrompt, hydrationTurnKey, TranscriptHydration, type TranscriptReader } from "../../src/hydration-transcript.js";
 import type { LibravDBClient } from "../../src/libravdb-client.js";
 
 const scope = { tenant: "fixture", session: "session", audience: "room" };
 function fixture() {
+  const hooks: { search?: () => Promise<void>; unavailable?: boolean } = {};
   const rows = new Map<string, any>();
   const entries: any[] = [
     { entryId: "u", message: { role: "user", content: "Investigate the connection failure" } },
@@ -16,6 +17,7 @@ function fixture() {
   let reset = false;
   const read: TranscriptReader = async ({ cursor, maxBytes, maxMessages }) => {
     assert.ok(maxBytes <= 1048576); assert.equal(maxMessages, 1);
+    if (hooks.unavailable) return { kind: "unavailable" };
     if (reset) return { kind: "reset", cursor: "0" };
     const i = Number(cursor ?? 0);
     return { kind: "page", cursor: String(i + 1), entries: entries.slice(i, i + 1), hasMore: i + 1 < entries.length };
@@ -29,13 +31,14 @@ function fixture() {
       rows.set(r.id, { ...r, metadataJson: Buffer.from(JSON.stringify(metadata)) }); return { ok: true };
     },
     async searchText(r: any) {
+      await hooks.search?.();
       const relevant = /connection|tls|secure/i.test(r.text);
       return { results: [...rows.values()].map(row => ({ ...row, score: relevant ? 0.85 : 0.4 })) };
     },
     async listByMeta(r: any) { return { results: [...rows.values()].filter(row => row.id === r.value) }; },
   } as unknown as LibravDBClient;
   const make = (s = scope) => new TranscriptHydration(s, client, read, text => text);
-  return { rows, entries, make, invalidate() { reset = true; } };
+  return { rows, entries, make, hooks, invalidate() { reset = true; }, restore() { reset = false; } };
 }
 
 test("transcript hydration survives replacement and returns original evidence only on related queries", async () => {
@@ -107,6 +110,46 @@ test("inactive discourse frames expire before the fifth later user turn", async 
   await session.close();
 });
 
+test("owner keys distinguish identical greetings, but retain retries of one message", async () => {
+  const f = fixture(); const session = f.make(); await session.refresh();
+  for (let i = 0; i < 5; i++) {
+    const message = { role: "user", content: "hello" };
+    const key = hydrationTurnKey(message);
+    assert.equal(hydrationTurnKey(message), key);
+    assert.notEqual(hydrationTurnKey({ ...message }), key);
+    await session.hydrate("hello", key, 16000);
+    await session.hydrate("hello", key, 16000);
+  }
+  assert.equal((await session.hydrate("continue", hydrationTurnKey({ role: "user", content: "continue" }), 16000)).context, "");
+  const message = { role: "user", content: "hello", id: "entry-1" };
+  assert.equal(hydrationTurnKey(message), hydrationTurnKey({ ...message }));
+  assert.notEqual(hydrationTurnKey(message), hydrationTurnKey({ ...message, id: "entry-2" }));
+  const timestamped = { role: "user", content: "hello", timestamp: 1234 };
+  assert.notEqual(hydrationTurnKey(timestamped), hydrationTurnKey({ ...timestamped }));
+  await session.close();
+});
+
+test("retries alone do not consume the inactivity window", async () => {
+  const f = fixture(); const session = f.make(); await session.refresh();
+  const message = { role: "user", content: "hello" };
+  for (let i = 0; i < 10; i++) await session.hydrate("hello", hydrationTurnKey(message), 16000);
+  assert.match((await session.hydrate("continue", "next", 16000)).context, /expired yesterday/);
+  const smaller = await session.hydrate("continue", "next", 100);
+  assert.ok(Buffer.byteLength(smaller.context) <= 100);
+  await session.close();
+});
+
+test("unavailable transcript reads do not suspend expiry or topic displacement", async () => {
+  for (const prompts of [Array(5).fill("hello"), ["start a database migration"]]) {
+    const f = fixture(); const session = f.make(); await session.refresh();
+    f.hooks.unavailable = true;
+    for (const [i, prompt] of prompts.entries()) await session.hydrate(prompt, String(i), 16000);
+    f.hooks.unavailable = false;
+    assert.equal((await session.hydrate("continue", "next", 16000)).context, "");
+    await session.close();
+  }
+});
+
 test("a substantive topic change displaces active work", async () => {
   const f = fixture(); const session = f.make(); await session.refresh();
   assert.equal((await session.hydrate("hello", "1", 16000)).context, "");
@@ -133,8 +176,45 @@ test("repeated assembly for one user turn reuses the first bounded decision", as
   const f = fixture(); const session = f.make(); await session.refresh();
   const first = await session.hydrate("Why did the TLS connection fail?", "same-turn", 16000);
   const repeated = await session.hydrate("hello", "same-turn", 16000);
-  assert.equal(repeated, first);
+  assert.equal(repeated.context, first.context);
   assert.match(repeated.context, /expired yesterday/);
+  await session.close();
+});
+
+for (const refreshed of [false, true]) test(`same-turn replay rejects a transcript reset (refresh=${refreshed})`, async () => {
+  const f = fixture(); const session = f.make(); await session.refresh();
+  assert.match((await session.hydrate("TLS", "same", 16000)).context, /expired yesterday/);
+  f.invalidate();
+  if (refreshed) await session.refresh();
+  assert.equal((await session.hydrate("TLS", "same", 16000)).context, "");
+  assert.equal((await session.hydrate("continue", "next", 16000)).context, "");
+  await session.close();
+});
+
+test("same-turn replay revalidates changed evidence and terminal answer", async () => {
+  for (const index of [2, 3]) {
+    const f = fixture(); const session = f.make(); await session.refresh();
+    assert.match((await session.hydrate("TLS", "same", 16000)).context, /expired yesterday/);
+    f.entries[index].message.content = "Withdrawn.";
+    const repeated = await session.hydrate("TLS", "same", 16000);
+    assert.doesNotMatch(repeated.context, /expired yesterday/);
+    assert.equal(repeated.hydratedIds.length, 0);
+    if (index === 3) assert.equal(repeated.context, "");
+    await session.close();
+  }
+});
+
+test("a reset during hydration cannot publish or reactivate an old packet", async () => {
+  const f = fixture(); const session = f.make(); await session.refresh();
+  let resume!: () => void; let started!: () => void;
+  const waiting = new Promise<void>(resolve => { resume = resolve; });
+  const reached = new Promise<void>(resolve => { started = resolve; });
+  f.hooks.search = async () => { started(); await waiting; };
+  const hydration = session.hydrate("TLS", "same", 16000);
+  await reached;
+  f.invalidate(); await session.refresh(); f.restore(); resume();
+  assert.equal((await hydration).context, "");
+  assert.equal((await session.hydrate("continue", "next", 16000)).context, "");
   await session.close();
 });
 

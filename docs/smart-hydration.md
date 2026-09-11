@@ -28,8 +28,9 @@ Background catch-up reads paced batches of at most 256 bounded single-message
 pages and schedules another batch while a tail remains. It does not require more
 user turns to reach recent work or block the model waiting for ingestion.
 The host retains at most 64 session adapters per runtime, evicting idle adapters
-after 30 minutes when admitting another session. Post-tool continuations reuse
-the same turn's packet; hydration never modifies active tool protocol.
+after 30 minutes when admitting another session. Post-tool continuations retain
+the same turn's query decision but revalidate evidence; hydration never modifies
+active tool protocol. Neither the adapter nor its owner caches rendered packets.
 
 This translates the useful serving concepts from EventFrame into TypeScript.
 It neither imports eventframed nor reproduces its forecasting, posterior,
@@ -83,14 +84,41 @@ social acknowledgements and treats short continuation acts such as "go on" as an
 explicit reference. Substantive turns clear or replace that pointer. Transcript
 catch-up reconstructs the same state, and a topic epoch prevents late background
 capture from reviving displaced work. Repeated assembly within one user turn
-reuses one packet and classification decision. Retained IDs are refreshed through
+retains the initial query and classification decision. Retained IDs are refreshed through
 scoped `index.get`; normal nomination retains candidate capacity. Explicit
 references can still rediscover expired frames from durable storage.
 
 The host must call `clear()` on reset or dispose the instance on scope/task
 replacement. Concurrent calls/reset fail explicitly. The production owner keys
 instances by tenant, session and audience; transcript generations are validated
-again before evidence can be returned.
+again before evidence can be returned. A reset clears active continuity, pending
+capture, and the working set; generation guards discard in-flight older work.
+
+The owner uses a host message `id` when present, otherwise object identity (weakly
+held), never serialized text or timestamps. Separate identical messages therefore
+advance inactivity; repeated assembly of the same message does not. The current
+SDK does not expose the host's internal logical-turn ID to `assemble`. Hosts that
+clone messages without IDs conservatively get a new turn and no cross-clone
+post-tool reuse, rather than incorrectly retaining historical evidence. A stable
+host entry ID is required for retry continuity across such clones. One bounded
+cursor validation read precedes serving, within the existing two-second deadline;
+anchors and evidence are re-read even for repeated assembly.
+
+### Lifecycle regression evidence (2026-09-10)
+
+Review baseline `1a30f01` reproduced stale same-key replay both when reset had not
+yet been refreshed and after refresh observed it. Both reset regressions and a
+changed-evidence regression failed before the correction. The equal-message
+hash also kept a frame after five separate greetings; distinct keys expired it.
+
+Focused controls now cover separate identical messages, repeated assembly of one
+message, stable-ID clones, equal timestamps without IDs, reset during in-flight
+retrieval, terminal/payload changes, and reduced byte budgets. Unavailable reads
+must not pause expiry or preserve displaced topics. These are synthetic adapter
+tests using the owner's exported key function, not live Gateway reproductions.
+Run `pnpm check` for the complete unit/integration/probe gate and `pnpm build` for
+the packaged build. No production deployment or new latency claim accompanies
+this review correction.
 
 - `HydrationIndex`: canonical frame nomination and reranking, with tenant,
   session/audience and as-of filtering BEFORE the candidate limit. Retrieval

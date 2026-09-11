@@ -4,11 +4,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildRulesContext } from "./rules.js";
 import { resolveReadTenants } from "./identity.js";
-import { TranscriptHydration, type TranscriptReader } from "./hydration-transcript.js";
+import { hydrationTurnKey, TranscriptHydration, type TranscriptReader } from "./hydration-transcript.js";
 
 import type { PluginRuntime } from "./plugin-runtime.js";
 
-const hydrationSessions = new WeakMap<PluginRuntime, Map<string, { adapter: TranscriptHydration; used: number; key?: string; context?: string }>>();
+const hydrationSessions = new WeakMap<PluginRuntime, Map<string, { adapter: TranscriptHydration; used: number; key?: string }>>();
 import type {
   LoggerLike,
   PluginConfig,
@@ -4235,15 +4235,15 @@ export function buildContextEngineFactory(
           void state.adapter.refresh().catch(() => logger.warn?.("LibraVDB smart hydration background capture unavailable"));
           const lastUser = findLastUserMessageIndex(args.messages);
           if (lastUser < 0) return projected;
-          const key = createHash("sha256").update(JSON.stringify(args.messages[lastUser])).digest("hex");
+          const key = hydrationTurnKey(args.messages[lastUser]);
           const postTool = hasLiveToolProtocolAfterLastUser(args.messages, lastUser);
           const remaining = args.tokenBudget - approximateMessagesTokens(projected.messages) - approximateTokenCount(projected.systemPromptAddition);
           const budget = Math.min(16000, Math.max(0, Math.floor(remaining)));
-          let context = state.key === key && postTool ? state.context ?? "" : "";
-          if (!postTool && budget >= 1024) {
+          let context = "";
+          if ((!postTool || state.key === key) && budget >= 1024) {
             const query = normalizeKernelContent(args.prompt ?? args.messages[lastUser].content, { retainOpenClawContext: false });
             const packet = await state.adapter.hydrate(query, key, budget);
-            context = packet.context; state.key = key; state.context = context;
+            context = packet.context; state.key = key;
             logger.info?.(`LibraVDB smart hydration status=${packet.status} frames=${packet.selectedIds.length} reads=${packet.hydratedIds.length} bytes=${Buffer.byteLength(context)} elapsedMs=${Math.round(packet.elapsedMs)}`);
           }
           if (context && Buffer.byteLength(context) <= budget) projected = { ...projected,
