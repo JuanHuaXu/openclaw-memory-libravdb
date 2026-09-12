@@ -120,6 +120,28 @@ Run `pnpm check` for the complete unit/integration/probe gate and `pnpm build` f
 the packaged build. No production deployment or new latency claim accompanies
 this review correction.
 
+### Follow-up lifecycle corrections
+
+At baseline `b709ef1`, controlled tests reproduced three failures:
+
+- Completing older assembly A after B replaced B's owner key and prevented B's
+  post-tool hydration. Ownership is now published before awaiting hydration;
+  stale completions cannot replace the key or attach their packet.
+- Three timed-out head checks started three unresolved reads. One outstanding
+  head read is now the limit per adapter. Later checks fail unavailable without
+  starting I/O or attaching more waiters; settlement reopens admission. This does
+  not claim cancellation of the one stalled SDK read.
+- A completed transcript tail yielded zero frames until another user entry
+  became visible. Capture now seals a verified completed tail at the read
+  boundary. Unresolved tails remain unindexed, and repeated refreshes neither
+  duplicate the frame nor renew its inactivity window. Capture is still async:
+  serving can miss evidence while catch-up is in progress.
+
+Regression controls cover serial owner ordering, stalled-read recovery, tail
+completion without a subsequent user, unresolved tails, and retention expiry.
+These are deterministic adapter/owner-block tests, not live Gateway proof or new
+performance measurements. No production configuration changes are required.
+
 - `HydrationIndex`: canonical frame nomination and reranking, with tenant,
   session/audience and as-of filtering BEFORE the candidate limit. Retrieval
   must work for paraphrases as well as exact terms. Rank scores are not assumed

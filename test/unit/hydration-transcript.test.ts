@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { classifyHydrationPrompt, hydrationTurnKey, TranscriptHydration, type TranscriptReader } from "../../src/hydration-transcript.js";
 import type { LibravDBClient } from "../../src/libravdb-client.js";
 
@@ -230,4 +231,50 @@ test("long transcript catch-up reaches recent work without requiring user turns"
   assert.equal(f.rows.size, 1);
   assert.match((await session.hydrate("continue", "1", 16000)).context, /expired yesterday/);
   await session.close();
+});
+
+test("a fenced completed tail is indexed without the next user, only once", async () => {
+  const f = fixture(); f.entries.pop();
+  const session = f.make(); await session.refresh();
+  assert.equal(f.rows.size, 1);
+  assert.match((await session.hydrate("continue", "1", 16000)).context, /expired yesterday/);
+  for (let i = 2; i <= 6; i++) {
+    await session.refresh();
+    await session.hydrate("hello", String(i), 16000);
+  }
+  assert.equal((await session.hydrate("continue", "7", 16000)).context, "");
+  assert.equal(f.rows.size, 1);
+  await session.close();
+});
+
+test("an unresolved fenced tail stays unindexed", async () => {
+  const f = fixture(); f.entries.splice(3);
+  const session = f.make(); await session.refresh();
+  assert.equal(f.rows.size, 0); await session.close();
+});
+
+test("timed-out head reads stay bounded and recover after settlement", async () => {
+  let release!: (page: any) => void; let reads = 0;
+  const reader: TranscriptReader = () => { reads++; return new Promise(resolve => { release = resolve; }); };
+  const session = new TranscriptHydration(scope, {} as LibravDBClient, reader, text => text);
+  for (let i = 0; i < 4; i++) assert.equal((await session.hydrate("hello", String(i), 16000)).status, "unavailable");
+  assert.equal(reads, 1);
+  release({ kind: "unavailable" }); await new Promise(resolve => setImmediate(resolve));
+  const next = session.hydrate("hello", "next", 16000);
+  assert.equal(reads, 2); release({ kind: "unavailable" }); await next;
+  await session.close();
+});
+
+test("owner publication cannot be rolled back by a late older turn", async () => {
+  const source = readFileSync("src/context-engine.ts", "utf8");
+  const block = source.slice(source.indexOf("          const key = hydrationTurnKey"), source.indexOf("          if (context && Buffer.byteLength(context)"));
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const owner = new AsyncFunction("args", "state", "hydrationTurnKey", "hasLiveToolProtocolAfterLastUser", "approximateMessagesTokens", "approximateTokenCount", "normalizeKernelContent", "logger", "projected", "lastUser", block + "\nreturn context;");
+  let finish!: (packet: any) => void;
+  const packet = { context: "B evidence", status: "ok", selectedIds: [], hydratedIds: [], elapsedMs: 0 };
+  const state = { key: "", adapter: { hydrate: async (q: string) => q === "A" ? new Promise(resolve => { finish = resolve; }) : packet } };
+  const run = (id: string, postTool = false) => owner({ messages: [{ id, content: id }], prompt: id, tokenBudget: 20000 }, state, hydrationTurnKey, () => postTool, () => 0, () => 0, (x: string) => x, {}, { messages: [] }, 0);
+  const a = run("A"); await run("B"); finish({ ...packet, context: "" }); await a;
+  assert.equal(state.key, "id:B");
+  assert.equal(await run("B", true), "B evidence");
 });

@@ -45,6 +45,8 @@ export class TranscriptHydration {
   private working: HydrationWorkingSet;
   readonly collection: string;
   private cursor?: string;
+  private headReadPending = false;
+  private sealedTail?: string;
   private pending: Located[] = [];
   private refreshTask?: Promise<void>;
   private catchupTimer?: ReturnType<typeof setTimeout>;
@@ -58,7 +60,7 @@ export class TranscriptHydration {
 
   private reset(cursor?: string) {
     this.generation++; this.topicEpoch++;
-    this.cursor = cursor; this.pending = []; this.active = undefined;
+    this.cursor = cursor; this.pending = []; this.active = undefined; this.sealedTail = undefined;
     this.turnKey = undefined; this.turnInput = undefined;
     // Replace rather than clear: an older hydration may still be awaiting I/O.
     this.working = new HydrationWorkingSet(this.scope);
@@ -72,6 +74,14 @@ export class TranscriptHydration {
 
   private page(cursor?: string) {
     return this.read({ sessionId: this.scope.session, sessionKey: this.scope.audience, cursor, maxMessages: 1, maxBytes: PAGE_BYTES });
+  }
+
+  private async headPage(): Promise<Page> {
+    // A timed-out read may still own I/O. Do not start or attach more reads to it.
+    if (this.headReadPending) return { kind: "unavailable" };
+    this.headReadPending = true;
+    try { return await this.page(this.cursor); }
+    finally { this.headReadPending = false; }
   }
 
   async close() {
@@ -101,27 +111,33 @@ export class TranscriptHydration {
     if (!ensured.ok) throw new Error("Hydration index unavailable");
     let active = this.active;
     const commit = () => { if (topicEpoch === this.topicEpoch) this.active = active; };
+    const seal = async () => {
+      const tail = this.pending.at(-1)?.entry.entryId;
+      if (!tail || tail === this.sealedTail) return;
+      const id = await this.store(this.pending);
+      if (generation !== this.generation) return;
+      if (id) { this.sealedTail = tail; active = { id, lastUsedTurn: this.turn }; }
+    };
     // Bounded background catch-up. Future calls resume the cursor.
     for (let n = 0; n < 256 && !this.closed; n++) {
       const page = await this.page(this.cursor);
       if (generation !== this.generation) return false;
       if (page.kind === "reset") { this.reset(page.cursor); return false; }
-      if (page.kind !== "page" || !page.entries?.length) { commit(); return false; }
+      if (page.kind !== "page") return false;
+      if (!page.entries?.length) { await seal(); commit(); return false; }
       const entry = page.entries[0];
       if (entry.message.role === "user") {
-        if (this.pending.length) {
-          const id = await this.store(this.pending);
-          if (generation !== this.generation) return false;
-          if (id) active = { id, lastUsedTurn: this.turn };
-        }
+        await seal();
+        if (generation !== this.generation) return false;
         if (classifyHydrationPrompt(this.normalize(visibleText(entry.message))) === "substantive") active = undefined;
         this.pending = [];
+        this.sealedTail = undefined;
       }
       this.pending.push({ entry, cursor: this.cursor });
       // Oversized turns remain available in original storage, never partly indexed.
       if (this.pending.length > 64 || Buffer.byteLength(JSON.stringify(this.pending)) > 2 * PAGE_BYTES) this.pending = [];
       this.cursor = page.cursor;
-      if (!page.hasMore) { commit(); return false; }
+      if (!page.hasMore) { await seal(); commit(); return false; }
     }
     commit();
     return !this.closed;
@@ -200,7 +216,7 @@ export class TranscriptHydration {
     const generation = this.generation;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const head = await Promise.race([
-      this.page(this.cursor),
+      this.headPage(),
       new Promise<Page>(resolve => { timer = setTimeout(() => resolve({ kind: "unavailable" }), 2000); }),
     ]).finally(() => { if (timer) clearTimeout(timer); });
     if (generation !== this.generation || this.turnKey !== turnKey) return empty();

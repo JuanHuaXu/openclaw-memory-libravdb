@@ -4242,8 +4242,10 @@ export function buildContextEngineFactory(
           let context = "";
           if ((!postTool || state.key === key) && budget >= 1024) {
             const query = normalizeKernelContent(args.prompt ?? args.messages[lastUser].content, { retainOpenClawContext: false });
+            state.key = key;
             const packet = await state.adapter.hydrate(query, key, budget);
-            context = packet.context; state.key = key;
+            if (state.key !== key) return projected;
+            context = packet.context;
             logger.info?.(`LibraVDB smart hydration status=${packet.status} frames=${packet.selectedIds.length} reads=${packet.hydratedIds.length} bytes=${Buffer.byteLength(context)} elapsedMs=${Math.round(packet.elapsedMs)}`);
           }
           if (context && Buffer.byteLength(context) <= budget) projected = { ...projected,
