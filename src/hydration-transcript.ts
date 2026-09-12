@@ -19,6 +19,8 @@ const isExcludedNestedToolActivity = (m: Message) => m.role === "custom" &&
   m.customType === "openclaw.nested-tool.v1" && m.display === true &&
   m.excludeFromContext === true && m.content === "";
 const PAGE_BYTES = 1024 * 1024;
+// Permit normal capture + serving overlap, but never queue behind stuck SDK I/O.
+const MAX_PENDING_TRANSCRIPT_READS = 2;
 const messageKeys = new WeakMap<object, string>();
 /** Prefer host identity metadata. Without it, never equate separately allocated messages by text. */
 export function hydrationTurnKey(message: object): string {
@@ -46,6 +48,7 @@ export class TranscriptHydration {
   readonly collection: string;
   private cursor?: string;
   private headReadPending = false;
+  private pendingReads = 0;
   private sealedTail?: string;
   private pending: Located[] = [];
   private refreshTask?: Promise<void>;
@@ -72,8 +75,13 @@ export class TranscriptHydration {
     this.collection = `hydration-v1-${hash(JSON.stringify([scope.tenant, scope.session, scope.audience]))}`;
   }
 
-  private page(cursor?: string) {
-    return this.read({ sessionId: this.scope.session, sessionKey: this.scope.audience, cursor, maxMessages: 1, maxBytes: PAGE_BYTES });
+  private async page(cursor?: string, signal?: AbortSignal): Promise<Page> {
+    if (this.closed || signal?.aborted || this.pendingReads >= MAX_PENDING_TRANSCRIPT_READS)
+      return { kind: "unavailable" };
+    this.pendingReads++;
+    try {
+      return await this.read({ sessionId: this.scope.session, sessionKey: this.scope.audience, cursor, maxMessages: 1, maxBytes: PAGE_BYTES });
+    } finally { this.pendingReads--; }
   }
 
   private async headPage(): Promise<Page> {
@@ -224,16 +232,16 @@ export class TranscriptHydration {
     if (head.kind !== "page") return empty();
     const continuityId = kind === "continuation" ? this.active?.id : undefined;
     const stored = new Map<string, StoredFrame>(); const scores = new Map<string, number>();
-    const parse = async (r: { id: string; metadataJson: Uint8Array }): Promise<HydrationFrame | undefined> => {
-      if (r.metadataJson.length > 32768) return;
+    const parse = async (r: { id: string; metadataJson: Uint8Array }, signal: AbortSignal): Promise<HydrationFrame | undefined> => {
+      if (signal.aborted || r.metadataJson.length > 32768) return;
       const value = JSON.parse(Buffer.from(r.metadataJson).toString()) as StoredFrame;
       if (value.hydrationVersion !== 1 || value.frameId !== r.id || value.frame.id !== r.id ||
           value.frame.scope.tenant !== this.scope.tenant || value.frame.scope.session !== this.scope.session ||
           value.frame.scope.audience !== this.scope.audience) return;
       if (!value.frame.evidence.some(ref => ref.kind === "tool-result")) return;
-      const page = await this.page(value.anchor.cursor);
+      const page = await this.page(value.anchor.cursor, signal);
       if (page.kind !== "page" || page.entries?.[0]?.entryId !== value.anchor.entryId) return;
-      const terminal = await this.page(value.terminal.cursor);
+      const terminal = await this.page(value.terminal.cursor, signal);
       const end = terminal.entries?.[0];
       if (terminal.kind !== "page" || end?.entryId !== value.terminal.entryId ||
           hash(visibleText(end.message)) !== value.terminalDigest) return;
@@ -244,7 +252,7 @@ export class TranscriptHydration {
         const out: HydrationFrame[] = [];
         for (const id of ids) {
           const result = await this.client.listByMeta({ collection: this.collection, key: "frameId", value: id }, { signal, timeoutMs: 1000 });
-          for (const r of result.results.slice(0, 1)) { const f = await parse(r); if (f) out.push(f); }
+          for (const r of result.results.slice(0, 1)) { const f = await parse(r, signal); if (f) out.push(f); }
         }
         return out;
       },
@@ -254,7 +262,7 @@ export class TranscriptHydration {
         const out: HydrationFrame[] = [];
         for (const r of result.results.slice(0, limit)) {
           if (!Number.isFinite(r.score) || r.score < 0.75) continue;
-          const f = await parse(r); if (f) { scores.set(f.id, r.score); out.push(f); }
+          const f = await parse(r, signal); if (f) { scores.set(f.id, r.score); out.push(f); }
         }
         return out;
       },
@@ -263,7 +271,7 @@ export class TranscriptHydration {
     const archive: EvidenceArchive = { read: async ({ eventId, ref, signal }) => {
       if (signal.aborted) return;
       const loc = stored.get(eventId)?.locations[ref.id]; if (!loc) return;
-      const page = await this.page(loc.cursor);
+      const page = await this.page(loc.cursor, signal);
       const entry = page.entries?.[0];
       if (signal.aborted || page.kind !== "page" || entry?.entryId !== loc.entryId) return;
       const b = blocks(entry.message)[loc.block]; if (!b) return;

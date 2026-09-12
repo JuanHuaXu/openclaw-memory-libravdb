@@ -131,6 +131,12 @@ At baseline `b709ef1`, controlled tests reproduced three failures:
   head read is now the limit per adapter. Later checks fail unavailable without
   starting I/O or attaching more waiters; settlement reopens admission. This does
   not claim cancellation of the one stalled SDK read.
+- All transcript SDK calls additionally share a two-read admission limit per
+  adapter: head, anchor, terminal, evidence, and background capture. This permits
+  one capture read alongside serving; saturated callers return unavailable
+  without queuing. Slots remain occupied until the underlying read settles,
+  even after the serving deadline. Cancelled serving work cannot start further
+  transcript reads. Rejections release slots; close prevents new admission.
 - A completed transcript tail yielded zero frames until another user entry
   became visible. Capture now seals a verified completed tail at the read
   boundary. Unresolved tails remain unindexed, and repeated refreshes neither
@@ -141,6 +147,13 @@ Regression controls cover serial owner ordering, stalled-read recovery, tail
 completion without a subsequent user, unresolved tails, and retention expiry.
 These are deterministic adapter/owner-block tests, not live Gateway proof or new
 performance measurements. No production configuration changes are required.
+
+The head-only bound in `eb1dc27` did not cover stalled anchors: four attempts
+started four unresolved reads. New regressions stall anchor, terminal, and
+evidence cursors separately, enforce the shared limit, and verify recovery after
+settlement. Controls also verify that a pending capture read permits healthy
+serving and that rejected SDK reads release their slots. This is bounded
+admission, not a claim that the SDK can cancel already-running I/O.
 
 - `HydrationIndex`: canonical frame nomination and reranking, with tenant,
   session/audience and as-of filtering BEFORE the candidate limit. Retrieval

@@ -38,8 +38,8 @@ function fixture() {
     },
     async listByMeta(r: any) { return { results: [...rows.values()].filter(row => row.id === r.value) }; },
   } as unknown as LibravDBClient;
-  const make = (s = scope) => new TranscriptHydration(s, client, read, text => text);
-  return { rows, entries, make, hooks, invalidate() { reset = true; }, restore() { reset = false; } };
+  const make = (s = scope, reader = read) => new TranscriptHydration(s, client, reader, text => text);
+  return { rows, entries, make, hooks, read, invalidate() { reset = true; }, restore() { reset = false; } };
 }
 
 test("transcript hydration survives replacement and returns original evidence only on related queries", async () => {
@@ -277,4 +277,48 @@ test("owner publication cannot be rolled back by a late older turn", async () =>
   const a = run("A"); await run("B"); finish({ ...packet, context: "" }); await a;
   assert.equal(state.key, "id:B");
   assert.equal(await run("B", true), "B evidence");
+});
+
+for (const cursor of [undefined, "3", "2"]) test(`all serving reads are bounded when cursor ${cursor} stalls`, async () => {
+  const f = fixture(); let stall = false;
+  const pending: Array<(page: any) => void> = [];
+  const session = f.make(scope, async p => {
+    if (stall && p.cursor === cursor) return new Promise(resolve => { pending.push(resolve); });
+    return f.read(p);
+  });
+  await session.refresh();
+  assert.equal((await session.hydrate("TLS", "control", 16000)).hydratedIds.length, 1);
+  stall = true;
+  try {
+    for (let i = 0; i < 4; i++) assert.equal((await session.hydrate("TLS", `attempt-${i}`, 16000)).hydratedIds.length, 0);
+    assert.ok(pending.length <= 2, `started ${pending.length} unresolved reads`);
+  } finally {
+    stall = false; for (const resolve of pending) resolve({ kind: "unavailable" });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal((await session.hydrate("TLS", "recovered", 16000)).hydratedIds.length, 1);
+    await session.close();
+  }
+});
+
+test("a pending capture read does not block healthy serving", async () => {
+  const f = fixture(); const indexer = f.make(); await indexer.refresh(); await indexer.close();
+  let release!: () => void; let entered!: () => void; let first = true;
+  const reached = new Promise<void>(resolve => { entered = resolve; });
+  const session = f.make(scope, async p => {
+    if (first) { first = false; entered(); await new Promise<void>(resolve => { release = resolve; }); }
+    return f.read(p);
+  });
+  const capture = session.refresh(); await reached;
+  try { assert.equal((await session.hydrate("TLS", "live", 16000)).hydratedIds.length, 1); }
+  finally { release(); await capture; await session.close(); }
+});
+
+test("rejected SDK reads release their admission slot", async () => {
+  const f = fixture(); let reject = false;
+  const session = f.make(scope, async p => { if (reject) throw new Error("read failed"); return f.read(p); });
+  await session.refresh(); reject = true;
+  for (let i = 0; i < 4; i++) await assert.rejects(session.hydrate("TLS", String(i), 16000), /read failed/);
+  reject = false;
+  assert.equal((await session.hydrate("TLS", "recovered", 16000)).hydratedIds.length, 1);
+  await session.close();
 });
